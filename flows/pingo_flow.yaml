@@ -1,0 +1,173 @@
+# Exemplo de fluxo n8n para o agente PINGO
+
+version: '1.0'
+meta:
+  name: PINGO Daily Processing
+  description: >-
+    Este fluxo demonstra como coletar dados diários do atleta,
+    aplicar regras de pontuação e red flags a partir deste repositório,
+    salvar os resultados no Supabase e acionar notificações conforme
+    o nível de atenção.  Ajuste IDs, URLs e credenciais conforme sua
+    instância do n8n e do Supabase.
+
+nodes:
+  # 1. Webhook de entrada
+  - id: webhook_in
+    type: n8n-nodes-base.webhook
+    parameters:
+      httpMethod: POST
+      path: pingo/daily
+      responseMode: 'onReceived'
+      responseData: {}
+    name: Webhook Daily Input
+
+  # 2. Baixar regras do GitHub
+  - id: get_rules
+    type: n8n-nodes-base.httpRequest
+    parameters:
+      requestMethod: GET
+      url: https://raw.githubusercontent.com/seu-usuario/pingo-agent/main/scoring/brums_rules.json
+      jsonParameters: true
+    name: Get BRUMS Rules
+
+  # 3. Função para processar dados e gerar flags
+  - id: process_data
+    type: n8n-nodes-base.function
+    parameters:
+      functionCode: |
+        const payload = items[0].json;
+        const rules = items[1].json;
+        // Calcular somas BRUMS
+        const dth = payload.negativeItems.reduce((sum, v) => sum + Number(v), 0);
+        const vigor = payload.vigorItems.reduce((sum, v) => sum + Number(v), 0);
+        const dthMinus = dth - vigor;
+        // Classificar vigor
+        let vigorLevel;
+        if (vigor >= 1) vigorLevel = 'high';
+        else if (vigor <= -1) vigorLevel = 'low';
+        else vigorLevel = 'medium';
+        // Classificar DTH
+        let dthLevel;
+        if (dth <= 0.5) dthLevel = 'low';
+        else if (dth <= 1.5) dthLevel = 'medium';
+        else dthLevel = 'high';
+        // Inicializar flags
+        const flags = [];
+        // Aplicar condição A
+        if (vigorLevel === 'low' && (dthLevel === 'medium' || dthLevel === 'high')) {
+          flags.push('A');
+        }
+        // TODO: Implementar verificação de padrão negativo (B) e contexto amplificador (C)
+        // Determinar nível de atenção
+        const levelMap = { '0': 'Verde', '1': 'Atenção', '2': 'Amarelo', '3': 'Vermelho' };
+        const level = levelMap[Math.min(flags.length, 3).toString()];
+        return [{ json: { athleteId: payload.id, dth, vigor, dthMinus, vigorLevel, dthLevel, flags, level } }];
+    name: Process Data
+
+  # 4. Enviar para Supabase
+  - id: post_supabase
+    type: n8n-nodes-base.httpRequest
+    parameters:
+      requestMethod: POST
+      url: https://SEU_SUPABASE_URL/rest/v1/brums_analysis
+      jsonParameters: true
+      headers:
+        - name: apikey
+          value: SUA_SUPABASE_ANON_KEY
+        - name: Authorization
+          value: Bearer SUA_SUPABASE_ANON_KEY
+      bodyParametersJson: |
+        {
+          "athlete_id": $json["athleteId"],
+          "data": new Date().toISOString().substr(0,10),
+          "dth": $json["dth"],
+          "vigor": $json["vigor"],
+          "dth_minus": $json["dthMinus"],
+          "carga": null,
+          "weight_kg": null,
+          "pre_post_moment": null,
+          "training_modality": null,
+          "training_time": null
+        }
+    name: Supabase Insert
+
+  # 5. Switch para notificação
+  - id: switch_level
+    type: n8n-nodes-base.switch
+    parameters:
+      propertyName: level
+      rules:
+        - operation: equal
+          value: "Verde"
+        - operation: equal
+          value: "Atenção"
+        - operation: equal
+          value: "Amarelo"
+        - operation: equal
+          value: "Vermelho"
+    name: Switch Level
+
+  # 6. Ramos de saída (exemplo com log ou envio de mensagem)
+  - id: verde_action
+    type: n8n-nodes-base.function
+    parameters:
+      functionCode: |
+        console.log(`Atleta ${items[0].json.athleteId} em nível Verde`);
+        return items;
+    name: Ação Verde
+
+  - id: atencao_action
+    type: n8n-nodes-base.function
+    parameters:
+      functionCode: |
+        console.log(`Atleta ${items[0].json.athleteId} requer Atenção`);
+        return items;
+    name: Ação Atenção
+
+  - id: amarelo_action
+    type: n8n-nodes-base.function
+    parameters:
+      functionCode: |
+        console.log(`Atleta ${items[0].json.athleteId} em nível Amarelo – notificar estagiária e coach.`);
+        return items;
+    name: Ação Amarelo
+
+  - id: vermelho_action
+    type: n8n-nodes-base.function
+    parameters:
+      functionCode: |
+        console.log(`Atleta ${items[0].json.athleteId} em nível Vermelho – notificar equipe de saúde.`);
+        return items;
+    name: Ação Vermelho
+
+connections:
+  webhook_in:
+    main:
+      - node: get_rules
+        type: main
+  get_rules:
+    main:
+      - node: process_data
+        type: main
+  process_data:
+    main:
+      - node: post_supabase
+        type: main
+  post_supabase:
+    main:
+      - node: switch_level
+        type: main
+  switch_level:
+    outputs:
+      "0":
+        - node: verde_action
+          type: main
+      "1":
+        - node: atencao_action
+          type: main
+      "2":
+        - node: amarelo_action
+          type: main
+      "3":
+        - node: vermelho_action
+          type: main

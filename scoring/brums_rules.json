@@ -1,0 +1,19 @@
+{
+  "vigor": {
+    "high": ">= +1 SD",
+    "medium": "> -1 SD and < +1 SD",
+    "low": "<= -1 SD"
+  },
+  "dth": {
+    "low": "<= +0.5 SD",
+    "medium": "> +0.5 SD and <= +1.5 SD",
+    "high": "> +1.5 SD"
+  },
+  "flags": [
+    {
+      "flag": "A",
+      "description": "Estado agudo desfavorável: vigor baixo e DTH elevado",
+      "condition": "vigor == 'low' && dth >= 'medium'"
+    }
+  ]
+}
