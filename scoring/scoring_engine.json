@@ -1,0 +1,62 @@
+{
+  "version": 1,
+  "engine": "PINGO_SCORING",
+  "unit_of_analysis": "daily_functional_configuration",
+  "principles": {
+    "no_diagnosis": true,
+    "no_prescription": true,
+    "no_autonomous_decision": true,
+    "intra_individual": true
+  },
+  "inputs": {
+    "brums": { "required": true, "type": "z_scores", "fields": ["vigor_z", "dth_z"] },
+    "pattern": { "required": false, "type": "time_series", "fields": ["dth_days_ge_medium", "vigor_drop_abrupt"] },
+    "context": { "required": false, "type": "signals", "fields": ["pmcsq2_ego_high", "critical_event_reported"] },
+    "construcional": { "required": false, "type": "indices", "fields": ["repertorio_protetor", "repertorio_risco", "apoio_ambiental", "claridade_metas"] },
+    "diet": { "required": false, "type": "adherence", "fields": ["adherence_score", "energy_availability_risk", "missed_meals", "gi_distress"] }
+  },
+  "derived_features": {
+    "brums_state": "use brums_rules.json",
+    "construcional_state": "use construcional_rules.json",
+    "diet_state": "use diet_adherence_rules.json"
+  },
+  "red_flags": {
+    "rules_files": [
+      "brums_rules.json",
+      "construcional_rules.json",
+      "diet_adherence_rules.json"
+    ],
+    "dictionary_file": "red_flags.json"
+  },
+  "aggregation": {
+    "attention_level_by_flag_count": {
+      "0": 0,
+      "1": 1,
+      "2": 2,
+      "3_or_more": 3
+    },
+    "override_rules": [
+      {
+        "if": "flag_count >= 3",
+        "then": { "attention_level": 3, "reason": ">=3 red flags => escalonamento obrigatório" }
+      },
+      {
+        "if": "flag_count == 2",
+        "then": { "attention_level": 2, "reason": "2 red flags => ajuste necessário" }
+      },
+      {
+        "if": "flag_count == 1",
+        "then": { "attention_level": 1, "reason": "1 red flag => atenção" }
+      }
+    ]
+  },
+  "outputs": {
+    "attention_level": "0..3",
+    "flag_count": "int",
+    "flags": "array",
+    "explainability": {
+      "include_rules_triggered": true,
+      "include_thresholds_used": true
+    }
+  }
+}
