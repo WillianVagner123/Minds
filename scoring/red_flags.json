@@ -1,5 +1,13 @@
 {
   "A": "Estado agudo desfavorável (BRUMS)",
-  "B": "Padrão negativo ≥ 3 dias consecutivos ou alta instabilidade", 
-  "C": "Contexto amplificador – clima de ego alto (PMCSQ‑2) ou evento crítico reportado"
+  "B": "Padrão negativo (>=3 dias) / alta instabilidade",
+  "C": "Contexto amplificador (clima motivacional / evento crítico / histórico funcional)",
+
+  "C1": "Construcional: risco alto + proteção baixa",
+  "C2": "Construcional: apoio ambiental baixo",
+  "C3": "Construcional: metas pouco claras + proteção não alta",
+
+  "D1": "Dieta: adesão baixa sustentada (>=3 dias)",
+  "D2": "Dieta: desconforto GI alto no dia",
+  "D3": "Dieta: risco de disponibilidade energética reportado"
 }
