@@ -1,4 +1,11 @@
 {
+  "version": 2,
+  "generated_at": "2025-12-27",
+  "notes": [
+    "BRUMS é usado como sinalizador de estado agudo (classe A) e de padrão/instabilidade (classe B).",
+    "Sem diagnóstico: apenas classificação operacional de atenção.",
+    "As variáveis *_days e *_volatility são opcionais (só disparam flags B se existirem no payload)."
+  ],
   "vigor": {
     "high": ">= +1 SD",
     "medium": "> -1 SD and < +1 SD",
@@ -11,9 +18,83 @@
   },
   "flags": [
     {
-      "flag": "A",
-      "description": "Estado agudo desfavorável: vigor baixo e DTH elevado",
-      "condition": "vigor == 'low' && dth >= 'medium'"
+      "flag": "A1",
+      "class": "A",
+      "description": "Estado agudo desfavorável: vigor baixo + DTH >= médio",
+      "condition": "vigor == 'low' && (dth == 'medium' || dth == 'high')"
+    },
+    {
+      "flag": "A2",
+      "class": "A",
+      "description": "Estado agudo crítico: vigor baixo + DTH alto",
+      "condition": "vigor == 'low' && dth == 'high'"
+    },
+    {
+      "flag": "A3",
+      "class": "A",
+      "description": "Hiperativação sob estresse: vigor alto + DTH alto (risco de custo funcional elevado)",
+      "condition": "vigor == 'high' && dth == 'high'"
+    },
+    {
+      "flag": "A4",
+      "class": "A",
+      "description": "Estresse agudo relevante: vigor médio + DTH alto",
+      "condition": "vigor == 'medium' && dth == 'high'"
+    },
+    {
+      "flag": "A5",
+      "class": "A",
+      "description": "Fadiga/baixa energia (mesmo sem DTH alto): vigor baixo + DTH baixo/médio",
+      "condition": "vigor == 'low' && (dth == 'low' || dth == 'medium')"
+    },
+    {
+      "flag": "A6",
+      "class": "A",
+      "description": "Sinal extremo de DTH (z >= +2.5): pico agudo importante",
+      "condition": "typeof dth_z !== 'undefined' && dth_z >= 2.5"
+    },
+    {
+      "flag": "A7",
+      "class": "A",
+      "description": "Sinal extremo de vigor baixo (z <= -2.5): queda aguda importante",
+      "condition": "typeof vigor_z !== 'undefined' && vigor_z <= -2.5"
+    },
+
+    {
+      "flag": "B1",
+      "class": "B",
+      "description": "Padrão negativo: DTH alto por >= 3 dias",
+      "condition": "typeof dth_high_days !== 'undefined' && dth_high_days >= 3"
+    },
+    {
+      "flag": "B2",
+      "class": "B",
+      "description": "Padrão negativo: vigor baixo por >= 3 dias",
+      "condition": "typeof vigor_low_days !== 'undefined' && vigor_low_days >= 3"
+    },
+    {
+      "flag": "B3",
+      "class": "B",
+      "description": "Instabilidade: alta volatilidade do DTH (janela 7d)",
+      "condition": "typeof dth_volatility_7d !== 'undefined' && dth_volatility_7d >= 1.2"
+    },
+    {
+      "flag": "B4",
+      "class": "B",
+      "description": "Instabilidade: alta volatilidade do vigor (janela 7d)",
+      "condition": "typeof vigor_volatility_7d !== 'undefined' && vigor_volatility_7d >= 1.2"
+    },
+    {
+      "flag": "B5",
+      "class": "B",
+      "description": "Queda abrupta de vigor (delta <= -1.0 SD vs dia anterior)",
+      "condition": "typeof vigor_delta_1d !== 'undefined' && vigor_delta_1d <= -1.0"
+    },
+    {
+      "flag": "B6",
+      "class": "B",
+      "description": "Subida abrupta de DTH (delta >= +1.0 SD vs dia anterior)",
+      "condition": "typeof dth_delta_1d !== 'undefined' && dth_delta_1d >= 1.0"
     }
   ]
 }
