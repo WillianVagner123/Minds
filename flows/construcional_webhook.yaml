@@ -1,0 +1,170 @@
+version: '1.0'
+meta:
+  name: PINGO Construcional Classification
+  description: >-
+    Fluxo de webhook do n8n para analisar respostas qualitativas do questionário
+    construcional. Recebe blocos de texto, classifica cada dimensão usando um
+    modelo de linguagem (ChatGPT ou similar), grava a análise no Supabase e
+    dispara imediatamente o cálculo de score para o atleta.
+
+nodes:
+  # 1. Webhook de entrada
+  - id: webhook_constr
+    type: n8n-nodes-base.webhook
+    name: Webhook Construcional
+    parameters:
+      httpMethod: POST
+      path: pingo/construcional
+      responseMode: 'onReceived'
+    
+  # 2. IA de classificação
+  - id: ai_classify
+    type: n8n-nodes-base.chatgpt
+    name: Classificar Construcional
+    parameters:
+      deployment: SEU_DEPLOYMENT_CHATGPT
+      modelName: gpt-4-1106-preview
+      temperature: 0.2
+      messages:
+        - role: system
+          content: >-
+            Você é um classificador que lê um texto qualitativo dos blocos de um
+            questionário construcional e classifica cada dimensão em 'low', 'medium'
+            ou 'high'. Responda apenas com JSON válido.
+        - role: user
+          content: >-
+            Classifique os seguintes blocos do construcional. Cada resposta deve
+            conter as quatro dimensões: repertorio_protetor, repertorio_risco,
+            apoio_ambiental e claridade_metas. Também inclua um campo
+            confidence (0–1) e um campo explanation com bullets.
+            
+            Bloco 1: {{$json.bloco_1}}
+            Bloco 2: {{$json.bloco_2}}
+            Bloco 3: {{$json.bloco_3}}
+            Bloco 4: {{$json.bloco_4}}
+            
+            Responda no formato:
+            {
+              "repertorio_protetor": "low|medium|high",
+              "repertorio_risco": "low|medium|high",
+              "apoio_ambiental": "low|medium|high",
+              "claridade_metas": "low|medium|high",
+              "confidence": 0.0,
+              "explanation": { "bullets": ["..."] }
+            }
+
+  # 3. Normalizar a saída do modelo
+  - id: normalize
+    type: n8n-nodes-base.function
+    name: Normalizar Saída
+    parameters:
+      functionCode: |
+        // Normaliza o JSON retornado pelo modelo de linguagem e inclui IDs
+        function pickVal(x) {
+          if (!x) return null;
+          const s = String(x).trim().toLowerCase();
+          if (["low","medium","high"].includes(s)) return s;
+          // aceitar variações em português
+          if (["baixo","baixa"].includes(s)) return "low";
+          if (["medio","médio","média","media"].includes(s)) return "medium";
+          if (["alto","alta"].includes(s)) return "high";
+          return null;
+        }
+        let candidate = items[0].json;
+        // se vier string JSON parseia
+        if (typeof candidate === 'string') {
+          try {
+            candidate = JSON.parse(candidate);
+          } catch (err) {
+            throw new Error('JSON inválido retornado pelo modelo');
+          }
+        }
+        const result = {
+          construcional_raw_id: $json.construcional_raw_id,
+          athlete_id: $json.athlete_id,
+          repertorio_protetor: pickVal(candidate.repertorio_protetor),
+          repertorio_risco: pickVal(candidate.repertorio_risco),
+          apoio_ambiental: pickVal(candidate.apoio_ambiental),
+          claridade_metas: pickVal(candidate.claridade_metas),
+          model_name: candidate.model_name || 'openai-gpt-4',
+          confidence: Number(candidate.confidence || 0.6),
+          explanation: candidate.explanation || {}
+        };
+        for (const k of ['repertorio_protetor','repertorio_risco','apoio_ambiental','claridade_metas']) {
+          if (!result[k]) throw new Error(`Campo inválido/ausente: ${k}`);
+        }
+        return [{ json: { result } }];
+
+  # 4. Inserir no Supabase
+  - id: upsert_constr
+    type: n8n-nodes-base.httpRequest
+    name: Supabase – Upsert Construcional
+    parameters:
+      requestMethod: POST
+      url: https://SEU_SUPABASE_URL/rest/v1/rpc/upsert_construcional_analysis
+      jsonParameters: true
+      headers:
+        - name: apikey
+          value: SEU_SERVICE_ROLE_KEY
+        - name: Authorization
+          value: Bearer SEU_SERVICE_ROLE_KEY
+        - name: Content-Type
+          value: application/json
+      bodyParametersJson: |
+        {
+          "p_construcional_raw_id": {{$json.result.construcional_raw_id}},
+          "p_athlete_id": "{{$json.result.athlete_id}}",
+          "p_repertorio_protetor": "{{$json.result.repertorio_protetor}}",
+          "p_repertorio_risco": "{{$json.result.repertorio_risco}}",
+          "p_apoio_ambiental": "{{$json.result.apoio_ambiental}}",
+          "p_claridade_metas": "{{$json.result.claridade_metas}}",
+          "p_model_name": "{{$json.result.model_name}}",
+          "p_confidence": {{$json.result.confidence}},
+          "p_explanation": {{$json.result.explanation}}
+        }
+
+  # 5. Disparar cálculo de score
+  - id: call_run_scoring
+    type: n8n-nodes-base.httpRequest
+    name: Chamar RunScoring
+    parameters:
+      requestMethod: POST
+      url: https://autowebhook.opingo.com.br/webhook/RunScoring
+      jsonParameters: true
+      bodyParametersJson: |
+        {
+          "athlete_id": "{{$json.result.athlete_id}}"
+        }
+
+  # 6. Responder ao webhook
+  - id: response
+    type: n8n-nodes-base.respondToWebhook
+    name: Responder
+    parameters:
+      responseData:
+        body:
+          json:
+            ok: true
+            message: "Construcional processado e scoring disparado."
+
+connections:
+  webhook_constr:
+    main:
+      - node: ai_classify
+        type: main
+  ai_classify:
+    main:
+      - node: normalize
+        type: main
+  normalize:
+    main:
+      - node: upsert_constr
+        type: main
+  upsert_constr:
+    main:
+      - node: call_run_scoring
+        type: main
+  call_run_scoring:
+    main:
+      - node: response
+        type: main

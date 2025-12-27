@@ -1,0 +1,140 @@
+version: '1.0'
+meta:
+  name: PINGO Alert Dispatch
+  description: >-
+    Fluxo de notificação via Evolution (WhatsApp) para acionar a comissão técnica de
+    acordo com o nível de atenção retornado pelo PINGO. Envia mensagens
+    customizadas e registra em log.
+
+nodes:
+  # 1. Webhook de entrada
+  - id: webhook_alert
+    type: n8n-nodes-base.webhook
+    name: Webhook AlertDispatch
+    parameters:
+      httpMethod: POST
+      path: pingo/alert_dispatch
+      responseMode: 'onReceived'
+
+  # 2. Decisão por nível de atenção
+  - id: switch_attention
+    type: n8n-nodes-base.switch
+    name: Switch Attention
+    parameters:
+      propertyName: attention_level
+      rules:
+        - operation: equal
+          value: "0"
+        - operation: equal
+          value: "1"
+        - operation: equal
+          value: "2"
+        - operation: equal
+          value: "3"
+        - operation: larger
+          value: "3"
+
+  # 3. Verde – sem notificação
+  - id: verde_action
+    type: n8n-nodes-base.function
+    name: Verde Action
+    parameters:
+      functionCode: |
+        // Não envia mensagem; apenas retorna
+        console.log(`Atleta ${$json.athlete_id} em nível verde (0 flags).`);
+        return items;
+
+  # 4. Atenção – 1 flag
+  - id: atencao_action
+    type: n8n-nodes-base.httpRequest
+    name: Atenção Action
+    parameters:
+      requestMethod: POST
+      url: https://API_EVOLUTION_URL/notify
+      jsonParameters: true
+      bodyParametersJson: |
+        {
+          "channel": "whatsapp",
+          "to": ["{{INTERN_NUMBER}}"],
+          "message": "PINGO – Atenção: atleta {{$json.athlete_id}} com 1 red flag ({{$json.flags}}). Resumo: {{$json.summary}}"
+        }
+
+  # 5. Amarelo – 2 flags
+  - id: amarelo_action
+    type: n8n-nodes-base.httpRequest
+    name: Amarelo Action
+    parameters:
+      requestMethod: POST
+      url: https://API_EVOLUTION_URL/notify
+      jsonParameters: true
+      bodyParametersJson: |
+        {
+          "channel": "whatsapp",
+          "to": ["{{INTERN_NUMBER}}", "{{COACH_NUMBER}}"],
+          "message": "PINGO – Amarelo: atleta {{$json.athlete_id}} com {{$json.flag_count}} red flags ({{$json.flags}}). Necessita ajuste. Resumo: {{$json.summary}}"
+        }
+
+  # 6. Vermelho – 3 ou mais flags
+  - id: vermelho_action
+    type: n8n-nodes-base.httpRequest
+    name: Vermelho Action
+    parameters:
+      requestMethod: POST
+      url: https://API_EVOLUTION_URL/notify
+      jsonParameters: true
+      bodyParametersJson: |
+        {
+          "channel": "whatsapp",
+          "to": ["{{INTERN_NUMBER}}", "{{COACH_NUMBER}}", "{{PSYCHOLOGIST_NUMBER}}"],
+          "message": "PINGO – Vermelho: atleta {{$json.athlete_id}} com {{$json.flag_count}} red flags ({{$json.flags}}). Escalonamento obrigatório. Resumo: {{$json.summary}}"
+        }
+
+  # 7. Responder
+  - id: respond
+    type: n8n-nodes-base.respondToWebhook
+    name: Responder
+    parameters:
+      responseData:
+        body:
+          json:
+            ok: true
+            message: "Alerta processado."
+
+connections:
+  webhook_alert:
+    main:
+      - node: switch_attention
+        type: main
+  switch_attention:
+    outputs:
+      "0":
+        - node: verde_action
+          type: main
+      "1":
+        - node: atencao_action
+          type: main
+      "2":
+        - node: amarelo_action
+          type: main
+      "3":
+        - node: vermelho_action
+          type: main
+      "4":
+        - node: vermelho_action
+          type: main
+  verde_action:
+    main:
+      - node: respond
+        type: main
+  atencao_action:
+    main:
+      - node: respond
+        type: main
+  amarelo_action:
+    main:
+      - node: respond
+        type: main
+  vermelho_action:
+    main:
+      - node: respond
+        type: main

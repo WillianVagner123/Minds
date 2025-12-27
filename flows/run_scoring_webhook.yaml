@@ -1,0 +1,174 @@
+version: '1.0'
+meta:
+  name: PINGO Run Scoring
+  description: >-
+    Webhook para calcular o score diário do atleta a partir dos insumos consolidados.
+    Busca sinais do Supabase, aplica regras de pontuação e red flags, grava o
+    resultado e dispara o alerta para a comissão técnica.
+
+nodes:
+  # 1. Webhook de entrada
+  - id: webhook_score
+    type: n8n-nodes-base.webhook
+    name: Webhook RunScoring
+    parameters:
+      httpMethod: POST
+      path: pingo/run_scoring
+      responseMode: 'onReceived'
+
+  # 2. Obter insumos
+  - id: get_inputs
+    type: n8n-nodes-base.httpRequest
+    name: Supabase – Get Inputs
+    parameters:
+      requestMethod: GET
+      url: https://SEU_SUPABASE_URL/rest/v1/pingo_scoring_inputs_view
+      jsonParameters: false
+      queryParameters:
+        - name: athlete_id
+          value: eq.{{$json["athlete_id"]}}
+      headers:
+        - name: apikey
+          value: SEU_SERVICE_ROLE_KEY
+        - name: Authorization
+          value: Bearer SEU_SERVICE_ROLE_KEY
+
+  # 3. Obter regras de pontuação
+  - id: get_rules
+    type: n8n-nodes-base.httpRequest
+    name: Supabase – Get Rules
+    parameters:
+      requestMethod: GET
+      url: https://SEU_SUPABASE_URL/rest/v1/scoring_rules
+      jsonParameters: false
+      queryParameters:
+        - name: select
+          value: key,content
+        - name: key
+          value: in.(scoring_engine,brums_rules,construcional_rules,diet_adherence_rules,red_flags)
+      headers:
+        - name: apikey
+          value: SEU_SERVICE_ROLE_KEY
+        - name: Authorization
+          value: Bearer SEU_SERVICE_ROLE_KEY
+
+  # 4. Calcular flags e nível de atenção
+  - id: compute_score
+    type: n8n-nodes-base.function
+    name: Calcular Score
+    parameters:
+      functionCode: |
+        // inputs: lista de objetos (esperamos 1 item) e regras: lista de {key, content}
+        const inputsArr = items[0].json;
+        const rulesArr = items[1].json;
+        if (!Array.isArray(inputsArr) || inputsArr.length === 0) {
+          throw new Error('Nenhum input encontrado para o atleta.');
+        }
+        const input = inputsArr[0];
+        // Organiza regras em dicionário
+        const rules = {};
+        for (const r of rulesArr) rules[r.key] = r.content;
+        // Avalia flags usando regras definidas (simplificado)
+        const flags = [];
+        // BRUMS (A flags)
+        if (input.dth_z != null && input.vigor_z != null) {
+          if (input.dth_z > 1 && input.vigor_z < -1) flags.push('A2');
+          else if (input.dth_z > 0.75 || input.vigor_z < -0.75) flags.push('A1');
+        }
+        // Dieta (D flags)
+        if (input.energy_availability_risk === true) flags.push('D3');
+        if (input.gi_distress != null && Number(input.gi_distress) >= 7) flags.push('D2');
+        if (input.missed_meals != null && Number(input.missed_meals) >= 2) flags.push('D1');
+        // Construcional (C flags)
+        if (input.repertorio_risco === 'high' && input.repertorio_protetor === 'low') flags.push('C1');
+        if (input.apoio_ambiental === 'low') flags.push('C2');
+        if (input.claridade_metas === 'low' && input.repertorio_protetor !== 'high') flags.push('C3');
+        // Determinar nível de atenção de acordo com o número de flags
+        let attentionLevel = 0;
+        if (flags.length >= 3) attentionLevel = 3;
+        else if (flags.length === 2) attentionLevel = 2;
+        else if (flags.length === 1) attentionLevel = 1;
+        // Resumo legível
+        const summary = `Nível ${attentionLevel} com flags: ${flags.join(', ')}`;
+        return [{ json: { athlete_id: input.athlete_id, reference_date: input.reference_date, attention_level: attentionLevel, flag_count: flags.length, flags, summary } }];
+
+  # 5. Inserir score no Supabase
+  - id: upsert_score
+    type: n8n-nodes-base.httpRequest
+    name: Supabase – Upsert Score
+    parameters:
+      requestMethod: POST
+      url: https://SEU_SUPABASE_URL/rest/v1/rpc/upsert_pingo_scoring_output
+      jsonParameters: true
+      headers:
+        - name: apikey
+          value: SEU_SERVICE_ROLE_KEY
+        - name: Authorization
+          value: Bearer SEU_SERVICE_ROLE_KEY
+        - name: Content-Type
+          value: application/json
+      bodyParametersJson: |
+        {
+          "p_athlete_id": "{{$json.athlete_id}}",
+          "p_reference_date": "{{$json.reference_date}}",
+          "p_attention_level": {{$json.attention_level}},
+          "p_flag_count": {{$json.flag_count}},
+          "p_flags": {{$json.flags}},
+          "p_rules_triggered": {{$json.flags}},
+          "p_thresholds_used": {},
+          "p_summary": "{{$json.summary}}"
+        }
+
+  # 6. Acionar o alerta
+  - id: call_alert
+    type: n8n-nodes-base.httpRequest
+    name: Chamar Alert Dispatch
+    parameters:
+      requestMethod: POST
+      url: https://autowebhook.opingo.com.br/webhook/AlertDispatch
+      jsonParameters: true
+      bodyParametersJson: |
+        {
+          "athlete_id": "{{$json.athlete_id}}",
+          "attention_level": {{$json.attention_level}},
+          "flag_count": {{$json.flag_count}},
+          "flags": {{$json.flags}},
+          "summary": "{{$json.summary}}"
+        }
+
+  # 7. Responder ao webhook
+  - id: respond
+    type: n8n-nodes-base.respondToWebhook
+    name: Responder
+    parameters:
+      responseData:
+        body:
+          json:
+            ok: true
+            message: "Scoring calculado e alerta disparado."
+
+connections:
+  webhook_score:
+    main:
+      - node: get_inputs
+        type: main
+  get_inputs:
+    main:
+      - node: get_rules
+        type: main
+  get_rules:
+    main:
+      - node: compute_score
+        type: main
+  compute_score:
+    main:
+      - node: upsert_score
+        type: main
+  upsert_score:
+    main:
+      - node: call_alert
+        type: main
+  call_alert:
+    main:
+      - node: respond
+        type: main
