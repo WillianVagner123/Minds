@@ -1,72 +1,37 @@
-# PINGO Agent Repository
+# MINDS Performance – Guia Completo e Lógica Final
 
-Este repositório contém os artefatos essenciais para operacionalizar o **PINGO**, o agente de inteligência do sistema **MINDS Performance**.  Aqui estão os componentes técnicos que permitem coletar dados dos atletas, processá‑los com base em regras transparentes e acionar intervenções por meio de automações no n8n e armazenamento no Supabase.
+Este documento sintetiza a arquitetura atualizada do **PINGO**, o motor de inteligência do MINDS Performance, e descreve como os componentes do repositório interagem para transformar dados de rotina dos atletas em sinais acionáveis e intervenções comportamentais.  Após as melhorias discutidas, a solução opera inteiramente por webhooks, eliminando filas internas e ciclos de polling para reduzir latência e simplificar a implementação.
 
-## 🌐 Visão Geral
+## 🔁 Pipeline completo
 
-O objetivo do PINGO é transformar dados dispersos da rotina do atleta (humor, carga de treino, contexto, etc.) em **sinais acionáveis** e micro‑intervenções.  Ele faz isso aplicando regras de pontuação explicitadas em arquivos JSON versionados neste repositório, salvando métricas no Supabase e orquestrando notificações via n8n.  A lógica de decisão permanece em código aberto para facilitar auditoria e melhoria contínua.
+1. **Coleta de dados via formulários** – os scripts em `forms/` criam formulários Google (diários, semanais, trimestrais) que medem humor (BRUMS), carga de treino, adesão nutricional, escalas psicossociais (ACSI‑28BR, GSES‑12, PMCSQ‑2, RESTQ‑Sport) e perguntas qualitativas (construcional). As respostas são gravadas em planilhas Google e analisadas via Apps Script, que enviam registros para o Supabase utilizando a API REST【951987460632417†L10-L15】.
+2. **Armazenamento e normalização no Supabase** – o script `schema/supabase_ddl.qsl` define todas as tabelas e índices.  Em `supabase_analytics.sql` são criadas views de z‑score intra‑individuais (por atleta) e uma view consolidada (`pingo_scoring_inputs_view`) que reúne os sinais mais recentes de BRUMS, dieta e construcional.  Uma função `upsert_pingo_scoring_output` persiste o score final com base no número de flags【951987460632417†L45-L51】.
+3. **Classificação qualitativa** – quando chegam blocos do construcional, o webhook `construcional_webhook.yaml` (dentro de `flows/`) é acionado.  Ele envia os textos a um modelo de linguagem (ChatGPT ou similar) que classifica as quatro dimensões em low/medium/high, normaliza a saída e grava os resultados no Supabase via RPC `upsert_construcional_analysis`.  Logo em seguida, chama o webhook de cálculo de score.
+4. **Motor de scoring** – o webhook `run_scoring_webhook.yaml` lê os insumos consolidados de `pingo_scoring_inputs_view`, busca as regras de pontuação (arquivos em `scoring/`), aplica o `scoring_engine.json` e suas regras auxiliares (`brums_rules.json`, `construcional_rules.json`, `diet_adherence_rules.json`) para gerar flags e determinar o nível de atenção.  O resultado é salvo com `upsert_pingo_scoring_output` e inclui um resumo com as flags desencadeadas【111214856191087†L10-L26】【111214856191087†L36-L59】.
+5. **Despacho de alertas** – após calcular o score, o fluxo dispara o webhook `alert_dispatch_webhook.yaml`.  Um switch avalia `attention_level` e envia mensagens via API Evolution conforme o número de flags: 0 (verde) → sem alerta; 1 (atenção) → notificar intern; 2 (amarelo) → notificar intern + treinador; ≥3 (vermelho) → escalonamento obrigatório para intern, treinador e psicólogo【876828957937634†L0-L20】.  As mensagens seguem o estatuto da engenharia comportamental (não diagnosticar nem prescrever), indicando apenas o risco funcional e orientando o próximo passo.
 
-## 📂 Estrutura do Projeto
+## 📂 Estrutura atualizada
 
-```
-pingo-agent/
-├── README.md                # Este arquivo
-├── schema/
-│   └── supabase_schema.sql  # Definição de tabelas e views no Supabase
-├── forms/
-│   ├── minds_performance_forms.gs    # Script Apps Script para criar formulários Google
-│   └── minds_performance_analysis.gs # Script Apps Script para analisar respostas e enviar ao Supabase
-├── scoring/
-│   ├── brums_rules.json     # Regras para classificar BRUMS (vigor e DTH) e gerar flags
-│   ├── red_flags.json       # Tipos de red flags para comportamentos/emóções
-│   └── attention_levels.json# Mapeamento de número de flags para nível de atenção (verde/amarelo/vermelho)
-├── flows/
-│   └── pingo_flow.yaml      # Exemplo de fluxo n8n para processar dados diários
-└── docs/
-    ├── manual_minds_performance.pdf  # Manual institucional (convertido do .docx)
-    └── value_proposition.pdf         # Proposta de valor estratégica
-```
+Após a revisão, cada pasta possui um **README.md** dedicado que explica sua finalidade:
 
-### schema/supabase_schema.sql
+- `forms/README.md` – descreve os scripts de criação e análise de formulários.
+- `schema/README.md` – explica como inicializar o banco Supabase e as views analíticas.
+- `scoring/README.md` – documenta os arquivos JSON de regras (engine, red flags, correlações, níveis de atenção) e a lógica de agregação.
+- `flows/README.md` – lista os fluxos do n8n (pingo original e os novos webhooks) e orienta a importação.
 
-Define todas as tabelas necessárias para armazenar cadastros de atletas, análises de questionários (BRUMS, ACSI‑28BR, GSES‑12, PMCSQ‑2, RESTQ‑Sport, CBAS/LSS), cargas de treino semanais, avaliações nutricionais e vistas calculadas (z‑scores e flags).  É possível importar este arquivo diretamente no Supabase para criar a base de dados.
+Além disso, adicionamos novos fluxos YAML em `flows/`:
 
-### forms/
+| Fluxo | Função |
+| --- | --- |
+| **construcional_webhook.yaml** | Classifica respostas qualitativas, grava no Supabase e dispara o cálculo de score. |
+| **run_scoring_webhook.yaml** | Lê insumos, aplica as regras de pontuação, gera flags e salva o score. |
+| **alert_dispatch_webhook.yaml** | Notifica a comissão via Evolution (WhatsApp) conforme o nível de atenção e registra o alerta. |
 
-Contém scripts de **Google Apps Script** que automatizam a criação dos formulários e a análise das respostas:
+## 📌 Observações finais
 
-- **minds_performance_forms.gs**: gera formulários diários, semanais e trimestrais no Google Forms. Os formulários incluem o BRUMS, carga de treino, check‑ins de vigor, questionários ACSI‑28BR, GSES‑12, PMCSQ‑2, RESTQ‑Sport e blocos qualitativos. Cada formulário solicita o identificador do atleta e organiza as perguntas em seções lógicas.
-- **minds_performance_analysis.gs**: analisa as respostas dos formulários e grava métricas em novas abas do Google Sheets. Calcula somatórios, médias, desvio‑padrão, z‑scores e envia os dados para o Supabase via REST API.
+- O PINGO respeita os princípios de **não diagnóstico** e **não prescrição**: ele apenas quantifica sinais de risco e delega a decisão aos profissionais responsáveis【111214856191087†L10-L26】.  As mensagens de alerta seguem o modelo “sem improviso, sem pânico”.
+- As regras de pontuação (arquivos em `scoring/`) são transparentes e versionadas.  Qualquer alteração deve passar por revisão da equipe técnica para evitar alarmes falsos ou omissões.
+- Para personalizar a comunicação, altere os templates de mensagem no fluxo `alert_dispatch_webhook.yaml` e ajuste os números de telefone na variável Evolution.
+- Recomenda‑se habilitar um cron “watchdog” no n8n para conferir se há registros sem score (backup).  No entanto, a arquitetura principal opera apenas com triggers.
 
-### scoring/
-
-Esta pasta concentra os arquivos JSON que definem as **regras de pontuação**.  Ao mantê‑los aqui, é possível versionar e auditar mudanças sem modificar o código do n8n:
-
-- **brums_rules.json** – Categoriza o **Vigor** (energia) e o **DTH** (soma das escalas negativas) em níveis alto/médio/baixo usando desvio‑padrão intra‑indivíduo.  Inclui uma condição para gerar a flag **A** quando o vigor está baixo e o DTH está elevado.
-- **red_flags.json** – Enumera os tipos de red flags identificados pelo sistema:  
-  - `A`: estado agudo desfavorável detectado pelo BRUMS  
-  - `B`: padrões negativos persistentes (≥ 3 dias consecutivos) ou instabilidade  
-  - `C`: contexto amplificador, como clima de ego alto no PMCSQ‑2 ou eventos críticos reportados.
-- **attention_levels.json** – Mapeia o número de flags acumuladas para um nível de atenção: 0 → Verde, 1 → Atenção, 2 → Amarelo, ≥ 3 → Vermelho.
-
-### flows/pingo_flow.yaml
-
-Exemplo de fluxo do **n8n** para processar dados diários enviados por formulários ou webhooks.  O YAML serve como guia e deve ser importado ou replicado no editor do n8n, adaptando as credenciais e URLs conforme a sua instância.  Principais etapas:
-
-1. **Webhook** – recebe o payload diário (ID do atleta, respostas do BRUMS, RPE, duração, peso, modalidade etc.).
-2. **HTTP Request** – baixa as regras de pontuação (por exemplo, `brums_rules.json`) diretamente deste repositório via URL raw do GitHub.
-3. **Function** – calcula as somas do BRUMS (DTH e Vigor), o score DTH – Vigor, determina as categorias (alto/médio/baixo) conforme as regras, gera as flags A/B/C e contabiliza o número de flags.  Também calcula a carga de treino (RPE × duração) e normaliza campos extras (peso, tempo de treino).
-4. **HTTP Request** – envia o resultado para a API do Supabase (tabela `brums_analysis`).
-5. **Switch** – avalia a quantidade de flags e direciona para ramos de notificação (verde, atenção, amarelo, vermelho).  Cada ramo pode acionar mensagens no WhatsApp, e‑mails ou dashboards, conforme descrito no fluxo operacional do PINGO.
-
-## 🔧 Como utilizar
-
-1. **Configurar o Supabase**: importe `schema/supabase_schema.sql` em um projeto Supabase vazio.  Copie a URL e a chave anônima (anon key) para utilizar nos scripts.
-2. **Criar formulários**: abra o editor de Apps Script e cole o conteúdo de `forms/minds_performance_forms.gs`.  Execute `createAllForms()` (ou as funções específicas) para gerar os formulários de coleta.  Conecte cada formulário a uma planilha Google Sheets.
-3. **Analisar respostas**: cole o script de `forms/minds_performance_analysis.gs` no mesmo projeto Apps Script ligado à planilha de respostas e execute a função correspondente (por exemplo, `analyzeDailyResponses()`).  Esse script gera abas de análise com z‑scores e envia os registros para o Supabase.
-4. **Configurar o n8n**: importe ou crie o fluxo descrito em `flows/pingo_flow.yaml`.  Ajuste o webhook inicial para apontar para a URL gerada pelo n8n.  Configure o node de HTTP Request com as credenciais do Supabase e a URL raw do GitHub para baixar as regras de pontuação.  Ajuste as mensagens de notificação conforme a sua estratégia de comunicação.
-5. **Versionar regras**: altere os arquivos JSON em `scoring/` para refinar classificações ou criar novas flags.  O n8n sempre irá buscar a versão mais recente no GitHub raw, tornando as mudanças instantâneas sem necessidade de reimplementar código.
-
-## 📜 Referências
-
-Este repositório foi construído com base em diversos documentos da iniciativa MINDS, incluindo a proposta de valor estratégica, o manual institucional e os scripts originais de formulários.  Eles foram condensados para fornecer um kit pronto de implementação.  Para detalhes conceituais sobre as escalas psicométricas, a análise do comportamento e a integração com nutrição de alto rendimento, consulte os documentos em `docs/`.
+Este guia consolida o conhecimento de toda a engenharia comportamental da plataforma MINDS, fornecendo uma visão coesa de como os dados são coletados, analisados e transformados em ações concretas.  Ele serve como manual de referência para desenvolvedores e gestores que pretendem adaptar ou escalar o PINGO em outros contextos esportivos ou de bem‑estar.
