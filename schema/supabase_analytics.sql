@@ -1,9 +1,9 @@
 -- ===========================================================
--- 📊 MINDS PERFORMANCE – ANALYTICS (VIEWS / TRIGGERS / INPUTS)
+-- 📊 MINDS PERFORMANCE – ANALYTICS (VIEWS / TRIGGERS / INPUTS / QUEUE RPCs)
 -- ===========================================================
 
 -- =========================
--- HELPERS
+-- 0) HELPERS
 -- =========================
 create or replace function public.touch_updated_at()
 returns trigger language plpgsql as $$
@@ -17,15 +17,72 @@ create trigger analysis_jobs_touch
 before update on analysis_jobs
 for each row execute function public.touch_updated_at();
 
+-- =========================
+-- 0B) FILA ROBUSTA (RPCs)  ✅ RECOMENDADO
+-- =========================
+
+-- Pega 1 job queued e já marca como processing (atômico, evita corrida)
+create or replace function public.claim_next_job(p_job_type text default null)
+returns table (
+  id bigint,
+  job_type text,
+  athlete_id text,
+  ref_table text,
+  ref_id bigint,
+  payload jsonb,
+  tries int,
+  created_at timestamptz
+)
+language plpgsql
+as $$
+begin
+  return query
+  with j as (
+    select *
+    from analysis_jobs
+    where status = 'queued'
+      and (p_job_type is null or job_type = p_job_type)
+    order by created_at asc
+    for update skip locked
+    limit 1
+  )
+  update analysis_jobs aj
+  set status = 'processing',
+      tries = aj.tries + 1,
+      updated_at = now()
+  from j
+  where aj.id = j.id
+  returning aj.id, aj.job_type, aj.athlete_id, aj.ref_table, aj.ref_id, aj.payload, aj.tries, aj.created_at;
+end;
+$$;
+
+create or replace function public.mark_job_done(p_id bigint)
+returns void language sql as $$
+  update analysis_jobs
+  set status='done', last_error=null, updated_at=now()
+  where id=p_id;
+$$;
+
+create or replace function public.mark_job_error(p_id bigint, p_error text)
+returns void language sql as $$
+  update analysis_jobs
+  set status='error', last_error=p_error, updated_at=now()
+  where id=p_id;
+$$;
+
+-- Índice parcial pra acelerar claim (opcional, mas ótimo)
+create index if not exists analysis_jobs_queued_idx
+on analysis_jobs (created_at)
+where status = 'queued';
+
 -- ===========================================================
 -- 1) VIEWS INTRA-INDIVIDUAIS (z-score por atleta)
---    (melhor que "over()" global)
 -- ===========================================================
 
 -- -------------------------
 -- BRUMS VIEW (com peso ideal e flags simples)
 -- -------------------------
-create or replace view brums_analysis_view as
+create or replace view public.brums_analysis_view as
 with latest_ideal as (
   select distinct on (athlete_id)
     athlete_id,
@@ -85,11 +142,10 @@ left join latest_ideal li on li.athlete_id = b.athlete_id;
 -- -------------------------
 -- DIETA VIEW (derivados úteis pro scoring)
 -- -------------------------
-create or replace view diet_daily_view as
+create or replace view public.diet_daily_view as
 select
   d.*,
 
-  -- padronizações úteis
   case
     when d.adherence_score is null then null
     when d.adherence_score <= 2 then 'low'
@@ -115,60 +171,71 @@ from diet_daily d;
 -- -------------------------
 -- ACSI / GSES / PMCSQ / RESTQ / CBAS / WEEKLY / LOAD views (z por atleta)
 -- -------------------------
-create or replace view acsi_analysis_view as
+create or replace view public.acsi_analysis_view as
 select
   a.*,
-  (a.media - avg(a.media) over (partition by a.athlete_id)) / nullif(stddev_samp(a.media) over (partition by a.athlete_id), 0) as media_z
+  (a.media - avg(a.media) over (partition by a.athlete_id))
+    / nullif(stddev_samp(a.media) over (partition by a.athlete_id), 0) as media_z
 from acsi_analysis a;
 
-create or replace view gses_analysis_view as
+create or replace view public.gses_analysis_view as
 select
   g.*,
-  (g.media - avg(g.media) over (partition by g.athlete_id)) / nullif(stddev_samp(g.media) over (partition by g.athlete_id), 0) as media_z
+  (g.media - avg(g.media) over (partition by g.athlete_id))
+    / nullif(stddev_samp(g.media) over (partition by g.athlete_id), 0) as media_z
 from gses_analysis g;
 
-create or replace view pmcsq_analysis_view as
+create or replace view public.pmcsq_analysis_view as
 select
   p.*,
-  (p.clima_tarefa - avg(p.clima_tarefa) over (partition by p.athlete_id)) / nullif(stddev_samp(p.clima_tarefa) over (partition by p.athlete_id), 0) as clima_tarefa_z,
-  (p.clima_ego    - avg(p.clima_ego)    over (partition by p.athlete_id)) / nullif(stddev_samp(p.clima_ego)    over (partition by p.athlete_id), 0) as clima_ego_z
+  (p.clima_tarefa - avg(p.clima_tarefa) over (partition by p.athlete_id))
+    / nullif(stddev_samp(p.clima_tarefa) over (partition by p.athlete_id), 0) as clima_tarefa_z,
+  (p.clima_ego    - avg(p.clima_ego)    over (partition by p.athlete_id))
+    / nullif(stddev_samp(p.clima_ego)    over (partition by p.athlete_id), 0) as clima_ego_z
 from pmcsq_analysis p;
 
-create or replace view restq_analysis_view as
+create or replace view public.restq_analysis_view as
 select
   r.*,
-  (r.media - avg(r.media) over (partition by r.athlete_id)) / nullif(stddev_samp(r.media) over (partition by r.athlete_id), 0) as media_z
+  (r.media - avg(r.media) over (partition by r.athlete_id))
+    / nullif(stddev_samp(r.media) over (partition by r.athlete_id), 0) as media_z
 from restq_analysis r;
 
-create or replace view cbas_analysis_view as
+create or replace view public.cbas_analysis_view as
 select
   c.*,
-  (c.aversivos - avg(c.aversivos) over (partition by c.athlete_id)) / nullif(stddev_samp(c.aversivos) over (partition by c.athlete_id), 0) as aversivos_z
+  (c.aversivos - avg(c.aversivos) over (partition by c.athlete_id))
+    / nullif(stddev_samp(c.aversivos) over (partition by c.athlete_id), 0) as aversivos_z
 from cbas_analysis c;
 
-create or replace view weekly_analysis_view as
+create or replace view public.weekly_analysis_view as
 select
   w.*,
-  (w.desempenho - avg(w.desempenho) over (partition by w.athlete_id)) / nullif(stddev_samp(w.desempenho) over (partition by w.athlete_id), 0) as desempenho_z,
-  (w.adesao_nutricional - avg(w.adesao_nutricional) over (partition by w.athlete_id)) / nullif(stddev_samp(w.adesao_nutricional) over (partition by w.athlete_id), 0) as adesao_z
+  (w.desempenho - avg(w.desempenho) over (partition by w.athlete_id))
+    / nullif(stddev_samp(w.desempenho) over (partition by w.athlete_id), 0) as desempenho_z,
+  (w.adesao_nutricional - avg(w.adesao_nutricional) over (partition by w.athlete_id))
+    / nullif(stddev_samp(w.adesao_nutricional) over (partition by w.athlete_id), 0) as adesao_z
 from weekly_analysis w;
 
-create or replace view training_load_analysis_view as
+create or replace view public.training_load_analysis_view as
 select
   t.*,
-  (t.weekly_load - avg(t.weekly_load) over (partition by t.athlete_id)) / nullif(stddev_samp(t.weekly_load) over (partition by t.athlete_id), 0) as weekly_load_z,
-  (t.monotonia   - avg(t.monotonia)   over (partition by t.athlete_id)) / nullif(stddev_samp(t.monotonia)   over (partition by t.athlete_id), 0) as monotonia_z,
-  (t.strain      - avg(t.strain)      over (partition by t.athlete_id)) / nullif(stddev_samp(t.strain)      over (partition by t.athlete_id), 0) as strain_z,
-  (t.readiness   - avg(t.readiness)   over (partition by t.athlete_id)) / nullif(stddev_samp(t.readiness)   over (partition by t.athlete_id), 0) as readiness_z,
-  (t.acwr        - avg(t.acwr)        over (partition by t.athlete_id)) / nullif(stddev_samp(t.acwr)        over (partition by t.athlete_id), 0) as acwr_z
+  (t.weekly_load - avg(t.weekly_load) over (partition by t.athlete_id))
+    / nullif(stddev_samp(t.weekly_load) over (partition by t.athlete_id), 0) as weekly_load_z,
+  (t.monotonia   - avg(t.monotonia)   over (partition by t.athlete_id))
+    / nullif(stddev_samp(t.monotonia)   over (partition by t.athlete_id), 0) as monotonia_z,
+  (t.strain      - avg(t.strain)      over (partition by t.athlete_id))
+    / nullif(stddev_samp(t.strain)      over (partition by t.athlete_id), 0) as strain_z,
+  (t.readiness   - avg(t.readiness)   over (partition by t.athlete_id))
+    / nullif(stddev_samp(t.readiness)   over (partition by t.athlete_id), 0) as readiness_z,
+  (t.acwr        - avg(t.acwr)        over (partition by t.athlete_id))
+    / nullif(stddev_samp(t.acwr)        over (partition by t.athlete_id), 0) as acwr_z
 from training_load_analysis t;
 
 -- ===========================================================
--- 2) INPUTS CONSOLIDADOS PARA O N8N (o "pacote" que o n8n lê)
---    (alinhado ao scoring_engine.json: brums + diet + construcional + contexto)
+-- 2) INPUTS CONSOLIDADOS PARA O N8N
 -- ===========================================================
-
-create or replace view pingo_scoring_inputs_view as
+create or replace view public.pingo_scoring_inputs_view as
 with latest_brums as (
   select distinct on (athlete_id)
     athlete_id, data,
@@ -215,7 +282,7 @@ select
   d.missed_meals_n as missed_meals,
   d.gi_distress,
 
-  -- CONSTRUCIONAL (vem do n8n)
+  -- CONSTRUCIONAL
   c.repertorio_protetor,
   c.repertorio_risco,
   c.apoio_ambiental,
@@ -229,10 +296,9 @@ left join latest_constr c
   on c.athlete_id = b.athlete_id;
 
 -- ===========================================================
--- 3) FILA: quando chegar CONSTRUCIONAL RAW -> enfileira job pro n8n
+-- 3) FILA: quando chegar CONSTRUCIONAL RAW -> enfileira job
 -- ===========================================================
-
-create or replace function enqueue_construcional_extract()
+create or replace function public.enqueue_construcional_extract()
 returns trigger language plpgsql as $$
 begin
   insert into analysis_jobs(job_type, athlete_id, ref_table, ref_id, payload)
@@ -261,14 +327,12 @@ end $$;
 drop trigger if exists construcional_raw_enqueue on construcional_raw;
 create trigger construcional_raw_enqueue
 after insert on construcional_raw
-for each row execute function enqueue_construcional_extract();
+for each row execute function public.enqueue_construcional_extract();
 
 -- ===========================================================
--- 4) UPSERT: n8n devolve resultado do construcional
---    (você chama esta função via RPC/SQL no n8n)
+-- 4) UPSERT: n8n devolve resultado do construcional (RPC)
 -- ===========================================================
-
-create or replace function upsert_construcional_analysis(
+create or replace function public.upsert_construcional_analysis(
   p_construcional_raw_id bigint,
   p_athlete_id text,
   p_repertorio_protetor text,
@@ -296,7 +360,7 @@ begin
   set status = 'analyzed', last_error = null
   where id = p_construcional_raw_id;
 
-  -- (opcional) já enfileira o scoring depois que o construcional chega
+  -- já enfileira o scoring depois que o construcional chega
   insert into analysis_jobs(job_type, athlete_id, ref_table, ref_id, payload)
   values (
     'SCORING_RUN',
@@ -308,25 +372,9 @@ begin
 end $$;
 
 -- ===========================================================
--- 5) REGRAS DO GITHUB: tabela de cache (o n8n atualiza)
---    (o motor de scoring no n8n usa o scoring_engine.json e correlation rules)
+-- 5) VIEW FINAL: “último score por atleta”
 -- ===========================================================
--- O seu scoring_engine especifica inputs/outputs e aponta pros arquivos de regras. :contentReference[oaicite:2]{index=2}
--- As correlações X1..X7 vivem no questionnaire_correlation_rules.json. :contentReference[oaicite:3]{index=3}
-
--- Convenção de chaves:
---  key = 'scoring_engine'
---  key = 'questionnaire_correlation_rules'
---  key = 'attention_levels'
---  key = 'red_flags'
---  key = 'brums_rules'
---  key = 'construcional_rules'
---  key = 'diet_adherence_rules'
-
--- ===========================================================
--- 6) VIEW FINAL: “último score por atleta”
--- ===========================================================
-create or replace view pingo_latest_score_view as
+create or replace view public.pingo_latest_score_view as
 select distinct on (athlete_id)
   athlete_id,
   reference_date,
