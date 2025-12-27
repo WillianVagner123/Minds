@@ -1,0 +1,57 @@
+{
+  "version": 1,
+  "generated_at": "2025-12-27",
+  "inputs_expected": {
+    "brums": ["vigor", "dth"],
+    "acsi": ["coping_with_adversity", "peaking_under_pressure"],
+    "gses": ["gses_total"],
+    "restq": ["restq_state"],
+    "pmcsq2": ["ego_climate_high"],
+    "construcional": ["repertorio_protetor", "repertorio_risco", "apoio_ambiental", "claridade_metas"],
+    "diet": ["adherence_level", "energy_availability_risk"]
+  },
+  "flags": [
+    {
+      "flag": "X1",
+      "class": "A",
+      "description": "Ambíguo no BRUMS + coping baixo => estado do dia com repertório insuficiente",
+      "condition": "vigor == 'low' && dth == 'medium' && coping_with_adversity < 10"
+    },
+    {
+      "flag": "X2",
+      "class": "A",
+      "description": "Ambíguo no BRUMS + pressão baixa + autoeficácia baixa => risco de manejo ruim do treino",
+      "condition": "vigor == 'low' && dth == 'medium' && peaking_under_pressure < 6 && gses_total == 'low'"
+    },
+    {
+      "flag": "X3",
+      "class": "B",
+      "description": "Estado ruim + RESTQ baixo => custo funcional acumulado (padrão)",
+      "condition": "(vigor == 'low' && (dth == 'medium' || dth == 'high')) && restq_state == 'low'"
+    },
+    {
+      "flag": "X4",
+      "class": "C",
+      "description": "Estado ruim + clima de ego alto => contexto amplificador",
+      "condition": "(vigor == 'low' && dth == 'high') && ego_climate_high == true"
+    },
+    {
+      "flag": "X5",
+      "class": "C",
+      "description": "BRUMS ambíguo + repertório de risco alto e proteção baixa (construcional) => vulnerabilidade funcional",
+      "condition": "vigor == 'low' && dth == 'medium' && repertorio_risco == 'high' && repertorio_protetor == 'low'"
+    },
+    {
+      "flag": "X6",
+      "class": "B",
+      "description": "BRUMS desfavorável + adesão baixa sustentada => padrão misto (emoção + dieta)",
+      "condition": "(vigor == 'low' && (dth == 'medium' || dth == 'high')) && adherence_level == 'low' && typeof adherence_low_days !== 'undefined' && adherence_low_days >= 3"
+    },
+    {
+      "flag": "X7",
+      "class": "C",
+      "description": "Qualquer estado desfavorável + risco de disponibilidade energética reportado => amplificador biológico",
+      "condition": "(vigor == 'low' || dth == 'high') && energy_availability_risk == true"
+    }
+  ]
+}
