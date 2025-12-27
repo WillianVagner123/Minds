@@ -1,0 +1,172 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://minds.example/schema/pingo_scoring_output_standard_v1.json",
+  "title": "PINGO Scoring Output - Standard v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "athlete_id",
+    "date",
+    "inputs_used",
+    "derived_states",
+    "flags",
+    "flag_count",
+    "flags_verbose",
+    "rules_triggered",
+    "attention_level",
+    "attention_label",
+    "decision_policy",
+    "summary",
+    "explainability"
+  ],
+  "properties": {
+    "athlete_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "date": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+      "description": "YYYY-MM-DD"
+    },
+
+    "inputs_used": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["brums", "acsi", "gses", "restq", "pmcsq2", "construcional", "diet"],
+      "properties": {
+        "brums": { "type": "boolean" },
+        "acsi": { "type": "boolean" },
+        "gses": { "type": "boolean" },
+        "restq": { "type": "boolean" },
+        "pmcsq2": { "type": "boolean" },
+        "construcional": { "type": "boolean" },
+        "diet": { "type": "boolean" }
+      }
+    },
+
+    "derived_states": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["brums_state", "construcional_state", "diet_state"],
+      "properties": {
+        "brums_state": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["vigor", "dth"],
+          "properties": {
+            "vigor": { "$ref": "#/$defs/level3" },
+            "dth": { "$ref": "#/$defs/level3" },
+            "vigor_z": { "type": "number" },
+            "dth_z": { "type": "number" }
+          }
+        },
+
+        "construcional_state": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "repertorio_protetor": { "$ref": "#/$defs/level3" },
+            "repertorio_risco": { "$ref": "#/$defs/level3" },
+            "apoio_ambiental": { "$ref": "#/$defs/level3" },
+            "claridade_metas": { "$ref": "#/$defs/level3" }
+          }
+        },
+
+        "diet_state": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "adherence_level": { "$ref": "#/$defs/level3" },
+            "adherence_score": { "type": "number", "minimum": 0, "maximum": 100 },
+            "adherence_low_days": { "type": "integer", "minimum": 0 },
+            "gi_distress": { "type": "number", "minimum": 0, "maximum": 10 },
+            "energy_availability_risk": { "type": "boolean" }
+          }
+        }
+      }
+    },
+
+    "flags": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/flagCode" },
+      "uniqueItems": true
+    },
+
+    "flag_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+
+    "flags_verbose": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+
+    "rules_triggered": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 3,
+        "pattern": "^[a-zA-Z0-9_]+\\.[A-Z][0-9]+$",
+        "description": "Ex.: brums_rules.A1, diet_adherence_rules.D1"
+      }
+    },
+
+    "attention_level": {
+      "type": "integer",
+      "enum": [0, 1, 2, 3]
+    },
+
+    "attention_label": {
+      "type": "string",
+      "enum": ["Verde", "Atenção", "Amarelo", "Vermelho"]
+    },
+
+    "decision_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rule", "source"],
+      "properties": {
+        "rule": { "type": "string", "minLength": 1 },
+        "source": { "type": "string", "minLength": 1 }
+      }
+    },
+
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["title", "message"],
+      "properties": {
+        "title": { "type": "string", "minLength": 1 },
+        "message": { "type": "string", "minLength": 1 }
+      }
+    },
+
+    "explainability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["main_drivers", "notes"],
+      "properties": {
+        "main_drivers": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "notes": { "type": "string", "minLength": 1 }
+      }
+    }
+  },
+
+  "$defs": {
+    "level3": {
+      "type": "string",
+      "enum": ["low", "medium", "high"]
+    },
+    "flagCode": {
+      "type": "string",
+      "pattern": "^(A|B|C|D|X)[0-9]+$",
+      "description": "Ex.: A1, B2, C3, D1, X7"
+    }
+  }
+}
