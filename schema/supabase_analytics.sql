@@ -1,5 +1,13 @@
 -- ===========================================================
--- 📊 MINDS PERFORMANCE – ANALYTICS (WEBHOOK DIRECT / NO QUEUE)
+-- 📊 MINDS PERFORMANCE – ANALYTICS (EXTENDED)
+--
+-- Este script define views e funções analíticas para os dados
+-- armazenados nas tabelas de análise criadas no DDL estendido.
+-- As views calculam z‑scores intra‑individuais, categorizam
+-- indicadores de dieta, consolidam inputs para o motor de scoring
+-- e expõem RPCs para inserção de classificações construcionais
+-- e do score final. Baseado no modelo original, mas adaptado para
+-- funcionar com as tabelas desta versão.
 -- ===========================================================
 
 -- =========================
@@ -13,7 +21,7 @@ begin
 end $$;
 
 -- ===========================================================
--- 1) VIEWS INTRA-INDIVIDUAIS (z-score por atleta)
+-- 1) VIEWS INTRA‑INDIVIDUAIS (z‑score por atleta)
 -- ===========================================================
 
 -- -------------------------
@@ -28,9 +36,9 @@ with latest_ideal as (
   order by athlete_id, inserted_at desc
 )
 select
-  b.*,
+  b.*,  -- todas as colunas da tabela brums_analysis
 
-  -- z por atleta
+  -- z‑scores intra‑individuais
   (b.dth - avg(b.dth) over (partition by b.athlete_id))
     / nullif(stddev_samp(b.dth) over (partition by b.athlete_id), 0) as dth_z,
 
@@ -53,7 +61,7 @@ select
     else (b.weight_kg - li.ideal_weight_kg) / nullif(li.ideal_weight_kg, 0)
   end as weight_diff_pct,
 
-  -- flags simples
+  -- flags simples de peso
   case
     when li.ideal_weight_kg is not null
      and b.weight_kg is not null
@@ -61,6 +69,7 @@ select
     then true else false
   end as weight_red_flag,
 
+  -- flag de humor: dth_z > 1 e dth_minus_z > 1
   case
     when (
       (b.dth - avg(b.dth) over (partition by b.athlete_id))
@@ -81,8 +90,9 @@ left join latest_ideal li on li.athlete_id = b.athlete_id;
 -- -------------------------
 create or replace view public.diet_daily_view as
 select
-  d.*,
+  d.*,  -- todas as colunas da tabela diet_daily
 
+  -- nível de adesão categorizado
   case
     when d.adherence_score is null then null
     when d.adherence_score <= 2 then 'low'
@@ -90,6 +100,7 @@ select
     else 'high'
   end as adherence_level,
 
+  -- número de refeições perdidas (normalizado para inteiro)
   case
     when d.missed_meals ilike '%2%' then 2
     when d.missed_meals ilike '%1%' then 1
@@ -97,6 +108,7 @@ select
     else null
   end as missed_meals_n,
 
+  -- flag GI
   case
     when d.gi_distress is null then null
     when d.gi_distress >= 7 then true
@@ -106,8 +118,12 @@ select
 from diet_daily d;
 
 -- -------------------------
--- ACSI / GSES / PMCSQ / RESTQ / CBAS / WEEKLY / LOAD views
+-- ESCALAS: ACSI / GSES / PMCSQ / RESTQ / CBAS / WEEKLY / LOAD
 -- -------------------------
+-- Para cada escala, calculamos z‑scores da média (ou subescala
+-- principal) por atleta. As tabelas já guardam os valores
+-- agregados, então basta normalizar.
+
 create or replace view public.acsi_analysis_view as
 select
   a.*,
@@ -169,26 +185,45 @@ select
     / nullif(stddev_samp(t.acwr) over (partition by t.athlete_id), 0) as acwr_z
 from training_load_analysis t;
 
+-- -------------------------
+-- CONSTRUCIONAL VIEW
+-- -------------------------
+-- Não necessita z‑score, porém expõe a última classificação
+-- para consolidação.
+
+create or replace view public.construcional_analysis_view as
+select
+  c.*
+from construcional_analysis c;
+
 -- ===========================================================
--- 2) INPUTS CONSOLIDADOS PARA O N8N (WEBHOOK RunScoring)
+-- 2) INPUTS CONSOLIDADOS PARA O MOTOR DE SCORING
+--
+-- Esta view reúne o último BRUMS (z‑scores), a última dieta
+-- diária, e a última classificação construcional para cada atleta.
+-- É usada pelo n8n no webhook RunScoring.
 -- ===========================================================
 create or replace view public.pingo_scoring_inputs_view as
 with latest_brums as (
   select distinct on (athlete_id)
-    athlete_id, data,
-    (vigor_z) as vigor_z,
-    (dth_z) as dth_z
+    athlete_id,
+    data,
+    vigor_z,
+    dth_z,
+    inserted_at
   from brums_analysis_view
   order by athlete_id, data desc, inserted_at desc
 ),
 latest_diet as (
   select distinct on (athlete_id)
-    athlete_id, data,
+    athlete_id,
+    data,
     adherence_score,
     adherence_level,
     energy_availability_risk,
     missed_meals_n,
-    gi_distress
+    gi_distress,
+    inserted_at
   from diet_daily_view
   order by athlete_id, data desc, inserted_at desc
 ),
@@ -211,7 +246,7 @@ select
   b.vigor_z,
   b.dth_z,
 
-  -- DIET
+  -- DIETA
   d.adherence_score,
   d.adherence_level,
   d.energy_availability_risk,
@@ -230,7 +265,11 @@ left join latest_diet d on d.athlete_id = b.athlete_id
 left join latest_constr c on c.athlete_id = b.athlete_id;
 
 -- ===========================================================
--- 3) RPC: UPSERT do CONSTRUCIONAL (WEBHOOK)
+-- 3) RPC: UPSERT DO CONSTRUCIONAL
+--
+-- Esta função permite inserir um registro de classificação
+-- construcional e marcar a linha original como analisada. É usada
+-- pelo n8n após o AI classificar o texto.
 -- ===========================================================
 create or replace function public.upsert_construcional_analysis(
   p_construcional_raw_id bigint,
@@ -262,7 +301,12 @@ begin
 end $$;
 
 -- ===========================================================
--- 4) RPC: UPSERT do SCORE FINAL (WEBHOOK)
+-- 4) RPC: UPSERT DO SCORE FINAL
+--
+-- Esta função permite inserir ou atualizar o score final de um
+-- atleta em uma determinada data. É utilizada pelo n8n após
+-- calcular o nível de atenção e as flags. O on conflict garante
+-- que se já existir um registro para a data, ele será atualizado.
 -- ===========================================================
 create or replace function public.upsert_pingo_scoring_output(
   p_athlete_id text,
@@ -297,18 +341,3 @@ begin
     summary = excluded.summary,
     created_at = now();
 end $$;
-
--- ===========================================================
--- 5) VIEW FINAL: “último score por atleta”
--- ===========================================================
-create or replace view public.pingo_latest_score_view as
-select distinct on (athlete_id)
-  athlete_id,
-  reference_date,
-  attention_level,
-  flag_count,
-  flags,
-  summary,
-  created_at
-from pingo_scoring_output
-order by athlete_id, reference_date desc, created_at desc;
