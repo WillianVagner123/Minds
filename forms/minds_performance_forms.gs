@@ -640,11 +640,12 @@ function createAthleteRegistrationForm() {
   ]).setRequired(false);
 
   form.addPageBreakItem().setTitle('Dados de Contato e Responsáveis');
-  form.addTextItem().setTitle('Telefone do atleta').setRequired(false);
+  form.addTextItem().setTitle('Telefone do atleta (WhatsApp, com DDD)').setRequired(false);
   form.addTextItem().setTitle('E-mail do atleta').setRequired(false);
   form.addTextItem().setTitle('Endereço (cidade, bairro, UF)').setRequired(false);
   form.addTextItem().setTitle('Nome do responsável (quando menor de idade)').setRequired(false);
   form.addTextItem().setTitle('Telefone do responsável').setRequired(false);
+  form.addTextItem().setTitle('Telefone do Treindaor principal? (Whatsapp, com DDD)').setRequired(false);
   form.addParagraphTextItem().setTitle('Melhor forma/horário de contato').setRequired(false);
 
   form.addPageBreakItem().setTitle('Dados Esportivos Atuais');
