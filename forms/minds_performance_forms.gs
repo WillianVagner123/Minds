@@ -1,205 +1,232 @@
 /**
  * MINDS Performance – Construção de Formulários
  *
- * Este script cria uma coleção de formulários no Google Forms seguindo a nova
- * metodologia MINDS. Os formulários são organizados por periodicidade
- * (Diário, Semanal, Trimestral e Semestral) para que o atleta responda
- * diferentes blocos de perguntas em um único formulário, com seções
- * separadas e um tempo de preenchimento estimado. Um formulário
- * adicional é criado para o bloco treinador do RESTQ‑Sport.
+ * Este script cria uma coleção de formulários no Google Forms seguindo a metodologia MINDS.
+ * Os formulários são organizados por periodicidade (Diário, Semanal, Trimestral e Semestral).
+ * Um formulário adicional é criado para o bloco treinador do RESTQ-Sport.
  *
- * Para utilizar este script:
- * 1. Crie um novo projeto em https://script.google.com/ (Apps Script).
- * 2. Cole este código e execute as funções createAllForms() para
- *    gerar todos os formulários ou execute apenas as funções
- *    individuais conforme necessário.
- * 3. Conecte cada formulário a uma planilha de respostas para
- *    permitir análises posteriores.
- *
- * Observações importantes:
- * - Cada formulário solicita um identificador único do atleta (ID interno
- *   ou CPF). Este campo é fundamental para vincular as respostas às
- *   análises. Considere utilizar um código interno para maior
- *   confidencialidade.
- * - Apenas itens classificados como “questionário” foram incluídos. Itens
- *   como revisões de clima de equipe, metas ou avaliações físicas não
- *   possuem formulário neste script.
+ * Para utilizar:
+ * 1) Crie um projeto em https://script.google.com/
+ * 2) Cole este código
+ * 3) Execute createAllForms()
+ * 4) Conecte cada formulário a uma planilha de respostas para análises
  */
 
 /**
- * Cria o formulário diário. Este formulário reúne a escala BRUMS,
- * o registro da carga de treino (RPE × duração) e um check‑in rápido de
- * energia/vigor. O tempo estimado para preenchimento é de 3 a 4 minutos.
+ * Cria o formulário diário.
+ * Inclui: BRUMS (24), Carga de treino (RPE x duração),
+ * Check-in de Energia/Vigor (4),
+ * Nutrição (rápido – 4 itens objetivos),
+ * Peso e Detalhes de Treino.
  */
 function createDailyForm() {
   var form = FormApp.create('Avaliação Diária – MINDS Performance');
   form.setDescription(
-    'Formulário diário que reúne quatro blocos: (1) BRUMS – Escala de Humor, ' +
-    '(2) Carga de treino (RPE × duração), (3) Check‑in rápido de energia/vigor e ' +
-    '(4) Peso e detalhes de treino (pré/pós, modalidade e duração). ' +
-    'Tempo estimado de resposta: 4–5 minutos.'
+    'Formulário diário que reúne: (1) BRUMS – Escala de Humor, ' +
+    '(2) Carga de treino (RPE × duração), (3) Check-in rápido de energia/vigor, ' +
+    '(4) Nutrição (rápido) e (5) Peso e detalhes de treino. ' +
+    'Tempo estimado: ~5 minutos.'
   );
 
   // Identificação básica
   form.addTextItem()
-      .setTitle('ID do atleta (código interno ou CPF)')
-      .setRequired(true);
-  form.addDateItem()
-      .setTitle('Data da avaliação')
-      .setRequired(true);
+    .setTitle('ID do atleta (código interno ou CPF)')
+    .setRequired(true);
 
-  // Bloco BRUMS – 24 itens (escala 0–4)
+  form.addDateItem()
+    .setTitle('Data da avaliação')
+    .setRequired(true);
+
+  // BRUMS – 24 itens (0–4)
   form.addPageBreakItem().setTitle('BRUMS – Escala de Humor');
   var brumsItems = [
     'Tenso(a)', 'Nervoso(a)', 'Ansioso(a)', 'Estressado(a)',
     'Triste', 'Deprimido(a)', 'Miserável', 'Desanimado(a)',
-    'Furioso(a)', 'Irritado(a)', 'Incomodado(a)', 'Mal‑humorado(a)',
+    'Furioso(a)', 'Irritado(a)', 'Incomodado(a)', 'Mal-humorado(a)',
     'Energético(a)', 'Alerta', 'Desperto(a)', 'Vivo(a)',
     'Cansado(a)', 'Exausto(a)', 'Sem energia', 'Letárgico(a)',
     'Confuso(a)', 'Desorientado(a)', 'Em dúvida', 'Esquecido(a)'
   ];
   brumsItems.forEach(function(item) {
-    var scale = form.addScaleItem();
-    scale.setTitle('Nas últimas horas eu me senti... ' + item)
-         .setBounds(0, 4)
-         .setLabels('Nada', 'Extremamente')
-         .setRequired(true);
+    form.addScaleItem()
+      .setTitle('Nas últimas horas eu me senti... ' + item)
+      .setBounds(0, 4)
+      .setLabels('Nada', 'Extremamente')
+      .setRequired(true);
   });
 
-  // Bloco Carga de Treino
+  // Carga de Treino
   form.addPageBreakItem().setTitle('Registro de Carga de Treino');
-  var rpe = form.addScaleItem();
-  rpe.setTitle('Percepção subjetiva de esforço (RPE) da sessão')
-     .setBounds(0, 10)
-     .setLabels('Muito fácil', 'Máximo')
-     .setRequired(true);
-  form.addTextItem()
-      .setTitle('Duração da sessão (minutos)')
-      .setHelpText('Informe apenas números. Por exemplo: 60 para uma hora de treino.')
-      .setRequired(true);
 
-  // Bloco Check‑in de Energia/Vigor – 4 itens de vigor
-  form.addPageBreakItem().setTitle('Check‑in de Energia / Vigor');
+  form.addScaleItem()
+    .setTitle('Percepção subjetiva de esforço (RPE) da sessão')
+    .setBounds(0, 10)
+    .setLabels('Muito fácil', 'Máximo')
+    .setRequired(true);
+
+  form.addTextItem()
+    .setTitle('Duração da sessão (minutos)')
+    .setHelpText('Somente números. Ex.: 60')
+    .setRequired(true);
+
+  // Check-in de Energia/Vigor – 4 itens (0–4)
+  form.addPageBreakItem().setTitle('Check-in de Energia / Vigor');
   var vigorItems = ['Energético(a)', 'Alerta', 'Desperto(a)', 'Vivo(a)'];
   vigorItems.forEach(function(item) {
-    var scale = form.addScaleItem();
-    scale.setTitle('No momento, eu me sinto... ' + item)
-         .setBounds(0, 4)
-         .setLabels('Nada', 'Extremamente')
-         .setRequired(true);
+    form.addScaleItem()
+      .setTitle('No momento, eu me sinto... ' + item)
+      .setBounds(0, 4)
+      .setLabels('Nada', 'Extremamente')
+      .setRequired(true);
   });
 
-  // Bloco Peso e Detalhes de Treino – perguntas movidas do questionário semanal
+  // ==========================
+  // Nutrição – Check-in Diário (RÁPIDO / objetivo)
+  // ==========================
+  form.addPageBreakItem().setTitle('Nutrição – Check-in Diário (rápido)');
+
+  // 1) Adesão (Likert 1–5)
+  form.addScaleItem()
+    .setTitle('Hoje, o quanto você conseguiu seguir o plano alimentar combinado?')
+    .setBounds(1, 5)
+    .setLabels('Muito pouco', 'Quase tudo / totalmente')
+    .setRequired(true);
+
+  // 2) Refeição importante faltou (Não / 1 / 2+)
+  var missedMeals = form.addMultipleChoiceItem();
+  missedMeals
+    .setTitle('Hoje você deixou de fazer alguma refeição importante (café, almoço, jantar ou lanche pré/pós)?')
+    .setChoices([
+      missedMeals.createChoice('Não'),
+      missedMeals.createChoice('Sim, 1 refeição'),
+      missedMeals.createChoice('Sim, 2 ou mais')
+    ])
+    .setRequired(true);
+
+  // 3) Senti que comi menos do que precisava (Sim/Não)
+  var lowEnergyRisk = form.addMultipleChoiceItem();
+  lowEnergyRisk
+    .setTitle('Hoje você sentiu que comeu menos do que precisava para treinar/recuperar bem?')
+    .setHelpText('É percepção do dia (não é diagnóstico).')
+    .setChoices([
+      lowEnergyRisk.createChoice('Não'),
+      lowEnergyRisk.createChoice('Sim')
+    ])
+    .setRequired(true);
+
+  // 4) GI (0–10)
+  form.addScaleItem()
+    .setTitle('Hoje, qual foi o nível de desconforto gastrointestinal (estômago/intestino)?')
+    .setBounds(0, 10)
+    .setLabels('Nenhum', 'Muito alto')
+    .setRequired(true);
+
+  // Peso e Detalhes de Treino
   form.addPageBreakItem().setTitle('Peso e Detalhes de Treino');
+
   form.addTextItem()
-      .setTitle('Peso corporal (kg)')
-      .setHelpText('Informe seu peso em quilogramas. Utilize ponto para separar decimais, se necessário.')
-      .setRequired(false);
+    .setTitle('Peso corporal (kg)')
+    .setHelpText('Em kg. Use ponto para decimais, se necessário.')
+    .setRequired(false);
+
   var prePostDaily = form.addMultipleChoiceItem();
   prePostDaily.setTitle('Você está preenchendo este questionário em qual momento?')
-              .setChoices([
-                prePostDaily.createChoice('Pré‑treino'),
-                prePostDaily.createChoice('Pós‑treino'),
-                prePostDaily.createChoice('Nenhum / Outro')
-              ])
-              .setRequired(true);
+    .setChoices([
+      prePostDaily.createChoice('Pré-treino'),
+      prePostDaily.createChoice('Pós-treino'),
+      prePostDaily.createChoice('Nenhum / Outro')
+    ])
+    .setRequired(true);
+
   form.addTextItem()
-      .setTitle('Modalidade do treino')
-      .setHelpText('Ex.: corrida, musculação, ciclismo, etc.')
-      .setRequired(false);
+    .setTitle('Modalidade do treino')
+    .setHelpText('Ex.: corrida, musculação, ciclismo…')
+    .setRequired(false);
+
   form.addTextItem()
-      .setTitle('Tempo de treino (minutos)')
-      .setHelpText('Se estiver preenchendo antes do treino, informe a estimativa de duração. Se for após o treino, informe a duração real.')
-      .setRequired(false);
+    .setTitle('Tempo de treino (minutos)')
+    .setHelpText('Pré: estimativa. Pós: duração real.')
+    .setRequired(false);
 
   Logger.log('Formulário diário criado: ' + form.getEditUrl());
   Logger.log('Link para respostas: ' + form.getPublishedUrl());
 }
 
 /**
- * Cria o formulário semanal. Este formulário inclui a verificação de
- * adesão ao plano nutricional e o registro de eventos marcantes de
- * treino/competição. Tempo estimado de resposta: 2–3 minutos.
+ * Cria o formulário semanal.
+ * Foco qualitativo + adesão nutricional semanal + eventos marcantes.
  */
 function createWeeklyForm() {
   var form = FormApp.create('Avaliação Semanal – MINDS Performance');
-  // Nesta revisão, removemos o bloco de peso e detalhes de treino (agora presente no diário)
-  // e adicionamos um bloco focado em autopercepção de desempenho da semana. O formulário
-  // semanal deve capturar dados qualitativos e de aderência a dieta/sono, sem repetir
-  // medidas objetivas que já aparecem no diário.
   form.setDescription(
-    'Formulário semanal para avaliar a percepção do atleta sobre a semana de treinos e competições, ' +
-    'incluir fatores de desempenho (dieta, sono, treinos e competições) e coletar informações qualitativas. ' +
-    'Também acompanha a adesão ao plano nutricional e registra eventos marcantes da semana.'
+    'Formulário semanal para avaliar a percepção do atleta sobre a semana (dieta, sono, treinos e competições), ' +
+    'acompanhar adesão ao plano nutricional e registrar eventos marcantes.'
   );
 
   // Identificação básica
   form.addTextItem()
-      .setTitle('ID do atleta (código interno ou CPF)')
-      .setRequired(true);
+    .setTitle('ID do atleta (código interno ou CPF)')
+    .setRequired(true);
+
   form.addDateItem()
-      .setTitle('Data de início da semana (segunda‑feira)')
-      .setRequired(true);
+    .setTitle('Data de início da semana (segunda-feira)')
+    .setRequired(true);
 
-  // Bloco de autopercepção de desempenho (dieta, sono, treinos e competições)
+  // Autopercepção
   form.addPageBreakItem().setTitle('Autopercepção Semanal');
-  var performance = form.addScaleItem();
-  performance.setTitle('Nesta semana, como você avalia seu desempenho considerando dieta, sono, treinos e competições?')
-             .setBounds(1, 5)
-             .setLabels('Muito ruim', 'Excelente')
-             .setRequired(true);
-  // Pergunta qualitativa sobre cansaço e estratégia de enfrentamento
-  form.addParagraphTextItem()
-      .setTitle('Se esteve cansado(a) esta semana, o que você fez para se recuperar ou lidar com o cansaço?')
-      .setRequired(false);
-  // Pergunta livre para outros comentários qualitativos
-  form.addParagraphTextItem()
-      .setTitle('Outros comentários sobre sua semana de treinos e competições (sentimentos, percepções, etc.)')
-      .setRequired(false);
+  form.addScaleItem()
+    .setTitle('Nesta semana, como você avalia seu desempenho considerando dieta, sono, treinos e competições?')
+    .setBounds(1, 5)
+    .setLabels('Muito ruim', 'Excelente')
+    .setRequired(true);
 
-  // Bloco adesão nutricional
+  form.addParagraphTextItem()
+    .setTitle('Se esteve cansado(a) esta semana, o que você fez para se recuperar ou lidar com o cansaço?')
+    .setRequired(false);
+
+  form.addParagraphTextItem()
+    .setTitle('Outros comentários sobre sua semana (sentimentos, percepções, etc.)')
+    .setRequired(false);
+
+  // Adesão semanal
   form.addPageBreakItem().setTitle('Adesão ao Plano Nutricional');
-  var adherence = form.addScaleItem();
-  adherence.setTitle('Nesta semana, avalie sua adesão ao plano nutricional')
-           .setBounds(1, 5)
-           .setLabels('Muito baixa', 'Excelente')
-           .setRequired(true);
-  form.addParagraphTextItem()
-      .setTitle('Comentários sobre sua alimentação nesta semana (opcional)')
-      .setRequired(false);
+  form.addScaleItem()
+    .setTitle('Nesta semana, avalie sua adesão ao plano nutricional')
+    .setBounds(1, 5)
+    .setLabels('Muito baixa', 'Excelente')
+    .setRequired(true);
 
-  // Bloco eventos marcantes
+  form.addParagraphTextItem()
+    .setTitle('Comentários sobre sua alimentação nesta semana (opcional)')
+    .setRequired(false);
+
+  // Eventos marcantes
   form.addPageBreakItem().setTitle('Eventos Marcantes de Treino/Competição');
   form.addParagraphTextItem()
-      .setTitle('Descreva brevemente eventos marcantes ou incomuns ocorridos nos treinos ou competições da semana')
-      .setHelpText('Considere resultados importantes, lesões, mudanças de rotina ou qualquer fato que possa influenciar seu rendimento.')
-      .setRequired(false);
+    .setTitle('Descreva eventos marcantes ou incomuns nos treinos/competições da semana (opcional)')
+    .setHelpText('Resultados importantes, lesões, mudanças de rotina etc.')
+    .setRequired(false);
 
   Logger.log('Formulário semanal criado: ' + form.getEditUrl());
   Logger.log('Link para respostas: ' + form.getPublishedUrl());
 }
 
 /**
- * Cria o formulário trimestral. Este formulário agrupa quatro questionários: GSES‑12,
- * ACSI‑28BR, PMCSQ‑2 e RESTQ‑Sport (bloco atleta). Tempo estimado de
- * resposta: 20–25 minutos, pois o número total de itens é grande. Cada
- * questionário é separado por um divisor (page break) para organizar o
- * preenchimento.
+ * Cria o formulário trimestral: GSES-12, ACSI-28BR, PMCSQ-2 e RESTQ-Sport (atleta).
  */
 function createQuarterlyForm() {
   var form = FormApp.create('Avaliação Trimestral – MINDS Performance');
   form.setDescription(
-    'Formulário trimestral que reúne os questionários GSES‑12 (autoeficácia geral), ' +
-    'ACSI‑28BR (habilidades de enfrentamento), PMCSQ‑2 (clima motivacional) e ' +
-    'RESTQ‑Sport (estresse e recuperação – bloco atleta). Tempo estimado de resposta: 20–25 minutos.'
+    'Formulário trimestral que reúne: GSES-12, ACSI-28BR, PMCSQ-2 e RESTQ-Sport (atleta). ' +
+    'Tempo estimado: 20–25 minutos.'
   );
 
   // Identificação
   form.addTextItem().setTitle('ID do atleta (código interno ou CPF)').setRequired(true);
   form.addDateItem().setTitle('Data da avaliação').setRequired(true);
 
-  // --- Seção GSES‑12 ---
-  form.addPageBreakItem().setTitle('GSES‑12 – Autoeficácia Geral');
+  // GSES-12
+  form.addPageBreakItem().setTitle('GSES-12 – Autoeficácia Geral');
   var gsesItems = [
     'Se estou com problemas, geralmente encontro uma saída.',
     'Mesmo que alguém se oponha, eu encontro maneiras e formas de alcançar o que quero.',
@@ -213,15 +240,15 @@ function createQuarterlyForm() {
     'Eu geralmente consigo enfrentar qualquer adversidade.'
   ];
   gsesItems.forEach(function(text) {
-    var scale = form.addScaleItem();
-    scale.setTitle(text)
-         .setBounds(1, 5)
-         .setLabels('Discordo totalmente', 'Concordo totalmente')
-         .setRequired(true);
+    form.addScaleItem()
+      .setTitle(text)
+      .setBounds(1, 5)
+      .setLabels('Discordo totalmente', 'Concordo totalmente')
+      .setRequired(true);
   });
 
-  // --- Seção ACSI‑28BR ---
-  form.addPageBreakItem().setTitle('ACSI‑28BR – Habilidades de Enfrentamento');
+  // ACSI-28BR
+  form.addPageBreakItem().setTitle('ACSI-28BR – Habilidades de Enfrentamento');
   var acsiItems = [
     'Diariamente ou semanalmente eu estabeleço metas muito específicas que me guiam no que fazer.',
     'Eu tiro o maior proveito dos meus talentos e habilidades.',
@@ -253,18 +280,18 @@ function createQuarterlyForm() {
     'Eu cometo menos erros quando estou sob pressão porque me concentro melhor.'
   ];
   acsiItems.forEach(function(text) {
-    var scale = form.addScaleItem();
-    scale.setTitle(text)
-         .setBounds(0, 3)
-         .setLabels('Quase nunca', 'Quase sempre')
-         .setRequired(true);
+    form.addScaleItem()
+      .setTitle(text)
+      .setBounds(0, 3)
+      .setLabels('Quase nunca', 'Quase sempre')
+      .setRequired(true);
   });
 
-  // --- Seção PMCSQ‑2 ---
-  form.addPageBreakItem().setTitle('PMCSQ‑2 – Clima Motivacional no Esporte');
-  form.addSectionHeaderItem().setTitle('Instruções: Responda usando 1 (Discordo totalmente) a 5 (Concordo totalmente).');
+  // PMCSQ-2
+  form.addPageBreakItem().setTitle('PMCSQ-2 – Clima Motivacional no Esporte');
+  form.addSectionHeaderItem().setTitle('Instruções: Responda de 1 (Discordo totalmente) a 5 (Concordo totalmente).');
   var pmcsqItems = [
-    // Clima de Tarefa
+    // Tarefa
     'Os jogadores/atletas trabalham muito para aprender novas habilidades.',
     'O treinador dá atenção quando um jogador melhora alguma habilidade.',
     'Os jogadores/atletas ajudam uns aos outros a aprender.',
@@ -281,7 +308,7 @@ function createQuarterlyForm() {
     'Cada jogador/atleta é tratado como membro importante da equipe.',
     'Os jogadores/atletas se ajudam a melhorar e se destacar.',
     'O treinador encoraja os jogadores/atletas a se ajudarem.',
-    // Clima de Ego
+    // Ego (mantive como você colocou no texto)
     'Apenas os jogadores/atletas com as melhores estatísticas são elogiados.',
     'Os jogadores/atletas são punidos quando cometem um erro.',
     'Cada jogador/atleta tem um papel importante.',
@@ -301,17 +328,16 @@ function createQuarterlyForm() {
     'Os jogadores/atletas se ajudam a melhorar e a se destacar.'
   ];
   pmcsqItems.forEach(function(text) {
-    var scale = form.addScaleItem();
-    scale.setTitle(text)
-         .setBounds(1, 5)
-         .setLabels('Discordo totalmente', 'Concordo totalmente')
-         .setRequired(true);
+    form.addScaleItem()
+      .setTitle(text)
+      .setBounds(1, 5)
+      .setLabels('Discordo totalmente', 'Concordo totalmente')
+      .setRequired(true);
   });
 
-  // --- Seção RESTQ‑Sport – Bloco Atleta (1–48) ---
-  form.addPageBreakItem().setTitle('RESTQ‑Sport – Estresse e Recuperação (Atleta)');
+  // RESTQ-Sport – Atleta (1–48)
+  form.addPageBreakItem().setTitle('RESTQ-Sport – Estresse e Recuperação (Atleta)');
   var restqAthleteItems = [
-    // 1–24
     'Eu assisti televisão.',
     'Eu não dormi o suficiente.',
     'Eu terminei tarefas importantes.',
@@ -336,7 +362,6 @@ function createQuarterlyForm() {
     'Eu me senti para baixo.',
     'Eu visitei alguns amigos próximos.',
     'Eu me senti deprimido.',
-    // 25–48
     'Eu estava morto de cansaço após o trabalho.',
     'Outras pessoas me irritaram.',
     'Eu tive um sono satisfatório.',
@@ -363,11 +388,11 @@ function createQuarterlyForm() {
     'Eu estava zangado com alguém.'
   ];
   restqAthleteItems.forEach(function(text) {
-    var scale = form.addScaleItem();
-    scale.setTitle(text)
-         .setBounds(0, 6)
-         .setLabels('Nunca', 'Sempre')
-         .setRequired(true);
+    form.addScaleItem()
+      .setTitle(text)
+      .setBounds(0, 6)
+      .setLabels('Nunca', 'Sempre')
+      .setRequired(true);
   });
 
   Logger.log('Formulário trimestral criado: ' + form.getEditUrl());
@@ -375,46 +400,30 @@ function createQuarterlyForm() {
 }
 
 /**
- * Cria o formulário semestral. Esse formulário contém a escala CBAS/LSS
- * para avaliação do treinador pelo atleta. Itens que não se tratam de
- * questionário (revisão de metas, de plano alimentar, etc.) não foram
- * incluídos. Tempo estimado de resposta: 5–7 minutos.
+ * Cria o formulário semestral (CBAS/LSS).
  */
 function createSemiannualForm() {
   var form = FormApp.create('Avaliação Semestral – CBAS/LSS');
   form.setDescription(
-    'Formulário semestral em que o atleta avalia seu treinador em diferentes dimensões ' +
-    '(Técnica, Planejamento, Motivacional, Relação/ Suporte e Práticas Aversivas). ' +
-    'Tempo estimado de resposta: 5–7 minutos.'
+    'Formulário semestral em que o atleta avalia seu treinador. Tempo estimado: 5–7 minutos.'
   );
 
-  // Identificação do atleta e treinador
-  form.addTextItem()
-      .setTitle('ID do atleta (código interno ou CPF)')
-      .setRequired(true);
-  form.addTextItem()
-      .setTitle('Nome do treinador avaliado')
-      .setRequired(true);
-  form.addTextItem()
-      .setTitle('Categoria / Equipe (ex.: Sub‑17, Adulto)')
-      .setRequired(false);
-  form.addTextItem()
-      .setTitle('Período avaliado (ex.: 1º semestre 2025)')
-      .setRequired(false);
+  form.addTextItem().setTitle('ID do atleta (código interno ou CPF)').setRequired(true);
+  form.addTextItem().setTitle('Nome do treinador avaliado').setRequired(true);
+  form.addTextItem().setTitle('Categoria / Equipe (ex.: Sub-17, Adulto)').setRequired(false);
+  form.addTextItem().setTitle('Período avaliado (ex.: 1º semestre 2025)').setRequired(false);
 
-  // Função auxiliar para criar blocos de escala 1–5
   function addScaleBlock(sectionTitle, itemsArray) {
     form.addPageBreakItem().setTitle(sectionTitle);
     itemsArray.forEach(function(text) {
-      var scale = form.addScaleItem();
-      scale.setTitle(text)
-           .setBounds(1, 5)
-           .setLabels('Quase nunca', 'Quase sempre')
-           .setRequired(true);
+      form.addScaleItem()
+        .setTitle(text)
+        .setBounds(1, 5)
+        .setLabels('Quase nunca', 'Quase sempre')
+        .setRequired(true);
     });
   }
 
-  // Dimensões conforme o CBAS/LSS
   addScaleBlock('Técnica', [
     'O treinador fornece instruções claras.',
     'O treinador demonstra domínio técnico da modalidade.',
@@ -424,15 +433,17 @@ function createSemiannualForm() {
     'O treinador demonstra como realizar movimentos de forma eficaz.',
     'O treinador orienta sobre estratégias técnicas durante treinos e competições.'
   ]);
+
   addScaleBlock('Planejamento', [
     'O treinador organiza bem as sessões de treino.',
     'Os treinos têm começo, meio e fim bem definidos.',
     'O treinador segue um plano estruturado ao longo do ciclo.',
     'As metas de treino são claras e comunicadas.',
     'O treinador ajusta o treino conforme a fase do calendário competitivo.',
-    'O treinador demonstra preparo e conhecimento no planejamento físico‑técnico.',
+    'O treinador demonstra preparo e conhecimento no planejamento físico-técnico.',
     'O treinador dá feedback sobre o progresso do atleta em relação às metas do ciclo.'
   ]);
+
   addScaleBlock('Motivacional', [
     'O treinador incentiva o atleta a melhorar continuamente.',
     'O treinador mostra confiança na capacidade do atleta.',
@@ -442,6 +453,7 @@ function createSemiannualForm() {
     'O treinador comemora conquistas, mesmo que pequenas.',
     'O treinador ajuda o atleta a lidar com frustração em momentos críticos.'
   ]);
+
   addScaleBlock('Relação (Suporte)', [
     'O treinador entende o atleta como pessoa.',
     'O treinador está disponível para ouvir o atleta.',
@@ -453,6 +465,7 @@ function createSemiannualForm() {
     'O treinador estabelece comunicação aberta e respeitosa.',
     'O treinador mostra empatia em momentos difíceis.'
   ]);
+
   addScaleBlock('Práticas Aversivas', [
     'O treinador usa o medo como método de instrução.',
     'O treinador grita quando está com raiva.',
@@ -471,31 +484,18 @@ function createSemiannualForm() {
 }
 
 /**
- * Cria um formulário separado para o RESTQ‑Sport destinado ao treinador. Esse
- * formulário contém apenas as questões 49–81 do questionário RESTQ e deve
- * ser respondido pelo próprio treinador para autoavaliação ou pelo
- * avaliador responsável pela equipe técnica. Tempo estimado de
- * resposta: 5–7 minutos.
+ * RESTQ-Sport – Treinador (49–81)
  */
 function createRESTQTrainerForm() {
-  var form = FormApp.create('RESTQ‑Sport – Estresse e Recuperação (Treinador)');
+  var form = FormApp.create('RESTQ-Sport – Estresse e Recuperação (Treinador)');
   form.setDescription(
-    'Formulário separado para o bloco de itens do treinador no RESTQ‑Sport. ' +
-    'Destina‑se à autoavaliação do treinador ou avaliação por parte do staff. ' +
-    'Tempo estimado de resposta: 5–7 minutos.'
+    'Formulário separado para o bloco do treinador no RESTQ-Sport. Tempo estimado: 5–7 minutos.'
   );
-  // Identificação do treinador
-  form.addTextItem()
-      .setTitle('ID do treinador (código interno)')
-      .setRequired(true);
-  form.addTextItem()
-      .setTitle('Nome completo do treinador')
-      .setRequired(true);
-  form.addDateItem()
-      .setTitle('Data da avaliação')
-      .setRequired(true);
 
-  // Itens 49–81 do RESTQ‑Sport
+  form.addTextItem().setTitle('ID do treinador (código interno)').setRequired(true);
+  form.addTextItem().setTitle('Nome completo do treinador').setRequired(true);
+  form.addDateItem().setTitle('Data da avaliação').setRequired(true);
+
   var restqCoachItems = [
     'Eu tive algumas boas ideias.',
     'Eu entendia como meus atletas se sentiam.',
@@ -532,11 +532,11 @@ function createRESTQTrainerForm() {
     'Eu falei com meus atletas sobre as técnicas de regulação do nível de ativação (por exemplo: relaxamento).'
   ];
   restqCoachItems.forEach(function(text) {
-    var scale = form.addScaleItem();
-    scale.setTitle(text)
-         .setBounds(0, 6)
-         .setLabels('Nunca', 'Sempre')
-         .setRequired(true);
+    form.addScaleItem()
+      .setTitle(text)
+      .setBounds(0, 6)
+      .setLabels('Nunca', 'Sempre')
+      .setRequired(true);
   });
 
   Logger.log('Formulário RESTQ Treinador criado: ' + form.getEditUrl());
@@ -544,28 +544,22 @@ function createRESTQTrainerForm() {
 }
 
 /**
- * Cria o formulário de cadastro do atleta. Este formulário é extenso e
- * cobre identificação pessoal, dados de contato, histórico esportivo,
- * saúde física e mental, rotina de vida, rede de apoio, objetivos,
- * consentimento e um questionário construcional (quatro blocos).
- * Os itens são agrupados em seções (page breaks) para facilitar o
- * preenchimento.
+ * Cadastro do Atleta – MINDS Performance (inclui construcional em 4 blocos)
  */
 function createAthleteRegistrationForm() {
   var form = FormApp.create('Cadastro do Atleta – MINDS Performance');
   form.setDescription(
-    'Formulário completo de cadastro do atleta utilizado pelo MINDS Performance para recolher informações pessoais, ' +
-    'histórico esportivo, saúde física e mental, rotina de vida, rede de apoio, objetivos e expectativas, além de um questionário construcional. ' +
-    'Os dados coletados serão utilizados para personalizar o acompanhamento e permanecem confidenciais.'
+    'Formulário completo de cadastro do atleta (dados pessoais, histórico esportivo, saúde, rotina, rede de apoio, objetivos e construcional).'
   );
 
-  // Identificação básica
+  // Identificação
   form.addTextItem().setTitle('ID interno do atleta (código MINDS)').setRequired(true);
-  form.addTextItem().setTitle('Documento (CPF)').setHelpText('Informe apenas números. O CPF será criptografado no banco.').setRequired(false);
+  form.addTextItem().setTitle('Documento (CPF)').setHelpText('Informe apenas números.').setRequired(false);
   form.addTextItem().setTitle('Nome completo').setRequired(true);
   form.addTextItem().setTitle('Nome social / apelido esportivo').setRequired(false);
   form.addDateItem().setTitle('Data de nascimento').setRequired(true);
   form.addTextItem().setTitle('Idade').setRequired(false);
+
   var gender = form.addMultipleChoiceItem();
   gender.setTitle('Sexo / gênero').setChoices([
     gender.createChoice('Masculino'),
@@ -573,6 +567,7 @@ function createAthleteRegistrationForm() {
     gender.createChoice('Outro'),
     gender.createChoice('Prefiro não informar')
   ]).setRequired(false);
+
   var hand = form.addMultipleChoiceItem();
   hand.setTitle('Mão dominante').setChoices([
     hand.createChoice('Direita'),
@@ -580,169 +575,163 @@ function createAthleteRegistrationForm() {
     hand.createChoice('Ambidestro')
   ]).setRequired(false);
 
-  // Dados de contato e responsáveis
+  // Contato
   form.addPageBreakItem().setTitle('Dados de Contato e Responsáveis');
   form.addTextItem().setTitle('Telefone do atleta').setRequired(false);
   form.addTextItem().setTitle('E-mail do atleta').setRequired(false);
   form.addTextItem().setTitle('Endereço (cidade, bairro, UF)').setRequired(false);
   form.addTextItem().setTitle('Nome do responsável (quando menor de idade)').setRequired(false);
   form.addTextItem().setTitle('Telefone do responsável').setRequired(false);
-  form.addParagraphTextItem().setTitle('Melhor forma/horário de contato (WhatsApp, telefone, e-mail)').setRequired(false);
+  form.addParagraphTextItem().setTitle('Melhor forma/horário de contato').setRequired(false);
 
-  // Dados esportivos atuais
+  // Dados esportivos
   form.addPageBreakItem().setTitle('Dados Esportivos Atuais');
   form.addTextItem().setTitle('Modalidade esportiva principal').setRequired(true);
   form.addTextItem().setTitle('Categoria (sub-10, sub-12, sub-14, sub-17, adulto etc.)').setRequired(false);
   form.addTextItem().setTitle('Posição / função na equipe').setRequired(false);
   form.addTextItem().setTitle('Clube atual / equipe / centro de treinamento').setRequired(false);
   form.addTextItem().setTitle('Tempo de prática na modalidade atual (anos/meses)').setRequired(false);
-  form.addParagraphTextItem().setTitle('Volume atual de treino (nº de sessões por semana, duração média)').setRequired(false);
-  // Novo campo: peso ideal do atleta para sua modalidade. Este valor será usado para
-  // monitorar variações de peso superiores a 5% como potencial red flag. O
-  // campo é opcional, mas recomendado para atletas em categorias de peso.
+  form.addParagraphTextItem().setTitle('Volume atual de treino (nº sessões/semana, duração média)').setRequired(false);
+
   form.addTextItem()
-      .setTitle('Peso ideal para a modalidade (kg)')
-      .setHelpText('Informe o peso que você considera ideal para competir em sua modalidade. Utilize ponto para separar decimais.')
-      .setRequired(false);
+    .setTitle('Peso ideal para a modalidade (kg)')
+    .setHelpText('Opcional. Use ponto para decimais.')
+    .setRequired(false);
+
   form.addParagraphTextItem().setTitle('Competições previstas nos próximos 3–6 meses').setRequired(false);
-  form.addParagraphTextItem().setTitle('Outras modalidades que esteja praticando além da principal (quais, por quanto tempo, carga semanal)').setRequired(false);
+  form.addParagraphTextItem().setTitle('Outras modalidades praticadas').setRequired(false);
 
   // Histórico esportivo
   form.addPageBreakItem().setTitle('Histórico Esportivo');
   form.addTextItem().setTitle('Idade em que começou a praticar esportes').setRequired(false);
-  form.addParagraphTextItem().setTitle('Outras modalidades já praticadas (quais, por quanto tempo)').setRequired(false);
+  form.addParagraphTextItem().setTitle('Outras modalidades já praticadas').setRequired(false);
   form.addParagraphTextItem().setTitle('Clubes / equipes anteriores').setRequired(false);
-  form.addParagraphTextItem().setTitle('Principais competições já disputadas (regionais, nacionais, internacionais)').setRequired(false);
-  form.addParagraphTextItem().setTitle('Maiores conquistas esportivas (títulos, medalhas, recordes pessoais)').setRequired(false);
-  form.addParagraphTextItem().setTitle('Períodos de afastamento do esporte (motivo: lesão, estudos, trabalho, desmotivação etc.)').setRequired(false);
+  form.addParagraphTextItem().setTitle('Principais competições já disputadas').setRequired(false);
+  form.addParagraphTextItem().setTitle('Maiores conquistas esportivas').setRequired(false);
+  form.addParagraphTextItem().setTitle('Períodos de afastamento do esporte (motivo)').setRequired(false);
   form.addParagraphTextItem().setTitle('Treinadores marcantes na carreira (e por quê)').setRequired(false);
 
-  // Histórico de lesões e saúde física
+  // Saúde física
   form.addPageBreakItem().setTitle('Histórico de Lesões e Saúde Física');
-  form.addParagraphTextItem().setTitle('Lesões prévias relevantes (tipo, lado, data aproximada, tratamento realizado)').setRequired(false);
-  form.addParagraphTextItem().setTitle('Cirurgias ortopédicas ou outras cirurgias importantes').setRequired(false);
-  form.addParagraphTextItem().setTitle('Presença de dores crônicas (onde, intensidade, frequência)').setRequired(false);
-  form.addParagraphTextItem().setTitle('Doenças pré-existentes (asma, cardiopatias, diabetes, alergias etc.)').setRequired(false);
+  form.addParagraphTextItem().setTitle('Lesões prévias relevantes (tipo, data, tratamento)').setRequired(false);
+  form.addParagraphTextItem().setTitle('Cirurgias importantes').setRequired(false);
+  form.addParagraphTextItem().setTitle('Dores crônicas (onde, intensidade, frequência)').setRequired(false);
+  form.addParagraphTextItem().setTitle('Doenças pré-existentes (asma, diabetes, etc.)').setRequired(false);
   form.addParagraphTextItem().setTitle('Uso atual de medicamentos (qual, dose, motivo)').setRequired(false);
-  form.addParagraphTextItem().setTitle('Episódios prévios de concussão / traumatismo craniano (quando, sintomas)').setRequired(false);
+  form.addParagraphTextItem().setTitle('Concussão/traumatismo craniano (quando, sintomas)').setRequired(false);
 
-  // Histórico de saúde mental e suporte psicológico
+  // Saúde mental
   form.addPageBreakItem().setTitle('Histórico de Saúde Mental e Suporte Psicológico');
   var terapia = form.addMultipleChoiceItem();
-  terapia.setTitle('Já fez psicoterapia?')
-        .setChoices([
-          terapia.createChoice('Sim'),
-          terapia.createChoice('Não')
-        ])
-        .setRequired(false);
-  form.addParagraphTextItem().setTitle('Se respondeu "Sim", há quanto tempo e quais abordagens anteriores?').setRequired(false);
-  form.addParagraphTextItem().setTitle('Diagnósticos psicológicos ou psiquiátricos conhecidos').setRequired(false);
+  terapia.setTitle('Já fez psicoterapia?').setChoices([
+    terapia.createChoice('Sim'),
+    terapia.createChoice('Não')
+  ]).setRequired(false);
+
+  form.addParagraphTextItem().setTitle('Se "Sim", há quanto tempo e quais abordagens?').setRequired(false);
+  form.addParagraphTextItem().setTitle('Diagnósticos psicológicos/psiquiátricos conhecidos').setRequired(false);
   form.addParagraphTextItem().setTitle('Uso atual de medicação psiquiátrica (qual, dose)').setRequired(false);
-  form.addParagraphTextItem().setTitle('Situações gatilho frequentes (provas, jogos decisivos, conflitos familiares, escola etc.)').setRequired(false);
-  form.addParagraphTextItem().setTitle('Estratégias de enfrentamento que já utiliza (respiração, música, falar com alguém, isolamento etc.)').setRequired(false);
+  form.addParagraphTextItem().setTitle('Situações gatilho frequentes').setRequired(false);
+  form.addParagraphTextItem().setTitle('Estratégias de enfrentamento que já utiliza').setRequired(false);
 
-  // Histórico nutricional e corporal
+  // Nutrição/histórico corporal
   form.addPageBreakItem().setTitle('Histórico Nutricional e Corporal');
-  form.addParagraphTextItem().setTitle('Dietas anteriores relevantes (restrições extremas, low-carb, jejum prolongado etc.)').setRequired(false);
-  form.addParagraphTextItem().setTitle('Restrições alimentares (intolerâncias, alergias, escolhas éticas)').setRequired(false);
-  form.addParagraphTextItem().setTitle('Suplementos em uso (whey, creatina, cafeína, multivitamínico etc.)').setRequired(false);
-  form.addParagraphTextItem().setTitle('Histórico de variação de peso (ganhos/perdas rápidas, períodos de “corte” ou “bulking”)').setRequired(false);
-  form.addParagraphTextItem().setTitle('Autoimagem corporal (como se vê; se sente bem com o próprio corpo?)').setRequired(false);
+  form.addParagraphTextItem().setTitle('Dietas anteriores relevantes').setRequired(false);
+  form.addParagraphTextItem().setTitle('Restrições alimentares (intolerâncias, alergias, escolhas)').setRequired(false);
+  form.addParagraphTextItem().setTitle('Suplementos em uso').setRequired(false);
+  form.addParagraphTextItem().setTitle('Histórico de variação de peso').setRequired(false);
+  form.addParagraphTextItem().setTitle('Autoimagem corporal').setRequired(false);
 
-  // Rotina e contexto de vida
+  // Rotina
   form.addPageBreakItem().setTitle('Rotina e Contexto de Vida');
   form.addParagraphTextItem().setTitle('Rotina de estudos/trabalho (turno, carga horária)').setRequired(false);
   form.addTextItem().setTitle('Tempo médio de sono por noite (horas)').setRequired(false);
   form.addParagraphTextItem().setTitle('Horário típico de dormir e acordar').setRequired(false);
   form.addTextItem().setTitle('Tempo médio de deslocamento diário (minutos)').setRequired(false);
-  form.addParagraphTextItem().setTitle('Responsabilidades familiares (ajuda em casa, cuidado de irmãos etc.)').setRequired(false);
-  form.addParagraphTextItem().setTitle('Atividades de lazer preferidas (jogos, redes sociais, amigos, outras)').setRequired(false);
+  form.addParagraphTextItem().setTitle('Responsabilidades familiares').setRequired(false);
+  form.addParagraphTextItem().setTitle('Atividades de lazer preferidas').setRequired(false);
 
   // Rede de apoio
   form.addPageBreakItem().setTitle('Rede de Apoio');
-  form.addParagraphTextItem().setTitle('Pessoas de confiança (em casa, na escola, no clube)').setRequired(false);
-  form.addParagraphTextItem().setTitle('Como é a relação com os pais/responsáveis (boa, conflituosa, distante etc.)').setRequired(false);
-  form.addParagraphTextItem().setTitle('Como é a relação com colegas de equipe').setRequired(false);
-  form.addParagraphTextItem().setTitle('Principal fonte de apoio emocional (quem procura quando algo vai mal?)').setRequired(false);
+  form.addParagraphTextItem().setTitle('Pessoas de confiança (casa, escola, clube)').setRequired(false);
+  form.addParagraphTextItem().setTitle('Relação com pais/responsáveis').setRequired(false);
+  form.addParagraphTextItem().setTitle('Relação com colegas de equipe').setRequired(false);
+  form.addParagraphTextItem().setTitle('Principal fonte de apoio emocional').setRequired(false);
 
-  // Objetivos e expectativas
+  // Objetivos
   form.addPageBreakItem().setTitle('Objetivos e Expectativas');
-  form.addParagraphTextItem().setTitle('O que espera alcançar com o acompanhamento MINDS (curto, médio e longo prazo)').setRequired(false);
-  form.addParagraphTextItem().setTitle('Metas esportivas (ex.: jogar X campeonato, subir de categoria, ser titular)').setRequired(false);
-  form.addParagraphTextItem().setTitle('Metas pessoais (confiança, lidar com erro, foco, organização de rotina)').setRequired(false);
-  var motivScale = form.addScaleItem();
-  motivScale.setTitle('Nível de motivação atual')
-           .setBounds(0, 10)
-           .setLabels('Nada motivado', 'Extremamente motivado')
-           .setRequired(false);
-  var confScale = form.addScaleItem();
-  confScale.setTitle('Nível de confiança em relação ao futuro no esporte')
-           .setBounds(0, 10)
-           .setLabels('Nada confiante', 'Extremamente confiante')
-           .setRequired(false);
+  form.addParagraphTextItem().setTitle('O que espera alcançar com o acompanhamento MINDS').setRequired(false);
+  form.addParagraphTextItem().setTitle('Metas esportivas').setRequired(false);
+  form.addParagraphTextItem().setTitle('Metas pessoais').setRequired(false);
 
-  // Consentimento e privacidade
+  form.addScaleItem()
+    .setTitle('Nível de motivação atual')
+    .setBounds(0, 10)
+    .setLabels('Nada motivado', 'Extremamente motivado')
+    .setRequired(false);
+
+  form.addScaleItem()
+    .setTitle('Nível de confiança em relação ao futuro no esporte')
+    .setBounds(0, 10)
+    .setLabels('Nada confiante', 'Extremamente confiante')
+    .setRequired(false);
+
+  // Consentimento
   form.addPageBreakItem().setTitle('Consentimento e Privacidade');
   var consent = form.addMultipleChoiceItem();
   consent.setTitle('Você (ou seu responsável) concorda com o termo de consentimento livre e esclarecido?')
-         .setChoices([
-           consent.createChoice('Sim'),
-           consent.createChoice('Não')
-         ])
-         .setRequired(true);
+    .setChoices([consent.createChoice('Sim'), consent.createChoice('Não')])
+    .setRequired(true);
+
   var research = form.addMultipleChoiceItem();
   research.setTitle('Autoriza o uso de seus dados em pesquisa (opcional)?')
-         .setChoices([
-           research.createChoice('Sim'),
-           research.createChoice('Não')
-         ])
-         .setRequired(false);
-  form.addParagraphTextItem().setTitle('Preferências sobre compartilhamento de relatórios (quem pode receber o quê)').setRequired(false);
+    .setChoices([research.createChoice('Sim'), research.createChoice('Não')])
+    .setRequired(false);
 
-  // Bloco – Análise do Comportamento (Identificação de repertórios)
+  form.addParagraphTextItem()
+    .setTitle('Preferências sobre compartilhamento de relatórios (quem pode receber o quê)')
+    .setRequired(false);
+
+  // Análise do comportamento (livre)
   form.addPageBreakItem().setTitle('Bloco – Análise do Comportamento');
-  form.addParagraphTextItem().setTitle('Descreva os comportamentos-problema observados (topografia, frequência, duração, intensidade)').setRequired(false);
-  form.addParagraphTextItem().setTitle('Contexto típico de ocorrência e eventos antecedentes (A)').setRequired(false);
-  form.addParagraphTextItem().setTitle('Eventos consequentes (C) e possíveis consequências do comportamento').setRequired(false);
-  form.addParagraphTextItem().setTitle('Função provável do comportamento (atenção, fuga, acesso, automanutenção)').setRequired(false);
-  form.addParagraphTextItem().setTitle('História de aprendizagem relevante (práticas parentais, experiências escolares, influências de equipe)').setRequired(false);
-  form.addParagraphTextItem().setTitle('Recursos, repertórios e comportamentos alternativos já presentes (repertórios sociais, estratégias de autorregulação, coping, resolução de problemas)').setRequired(false);
+  form.addParagraphTextItem().setTitle('Descreva comportamentos-problema (topografia, frequência, duração, intensidade)').setRequired(false);
+  form.addParagraphTextItem().setTitle('Contexto típico e antecedentes (A)').setRequired(false);
+  form.addParagraphTextItem().setTitle('Consequências (C) e possíveis consequências do comportamento').setRequired(false);
+  form.addParagraphTextItem().setTitle('Função provável do comportamento').setRequired(false);
+  form.addParagraphTextItem().setTitle('História de aprendizagem relevante').setRequired(false);
+  form.addParagraphTextItem().setTitle('Recursos/repertórios já presentes (autorregulação, coping, etc.)').setRequired(false);
 
-  // Questionário Construcional – Bloco 1
+  // Construcional – 4 blocos
   form.addPageBreakItem().setTitle('Questionário Construcional – Bloco 1: O que você faz hoje');
-  form.addParagraphTextItem().setTitle('O que você já faz que te ajuda nos treinos e nas competições?').setRequired(false);
+  form.addParagraphTextItem().setTitle('O que você já faz que te ajuda nos treinos e competições?').setRequired(false);
   form.addParagraphTextItem().setTitle('O que você faz que às vezes atrapalha?').setRequired(false);
-  form.addParagraphTextItem().setTitle('Quando você treina ou compete, em quais situações se sente mais confiante?').setRequired(false);
-  form.addParagraphTextItem().setTitle('Em quais situações se sente inseguro ou com dificuldade?').setRequired(false);
+  form.addParagraphTextItem().setTitle('Em quais situações se sente mais confiante?').setRequired(false);
+  form.addParagraphTextItem().setTitle('Em quais situações se sente inseguro(a) ou com dificuldade?').setRequired(false);
 
-  // Questionário Construcional – Bloco 2
   form.addPageBreakItem().setTitle('Questionário Construcional – Bloco 2: O que acontece depois');
   form.addParagraphTextItem().setTitle('Quando você vai bem, o que costuma acontecer?').setRequired(false);
   form.addParagraphTextItem().setTitle('Quando você não vai tão bem, o que acontece?').setRequired(false);
   form.addParagraphTextItem().setTitle('O que mais te motiva a continuar treinando e competindo?').setRequired(false);
-  form.addParagraphTextItem().setTitle('Existe algo negativo ou difícil que às vezes pesa para você no esporte?').setRequired(false);
+  form.addParagraphTextItem().setTitle('Existe algo difícil/negativo que às vezes pesa no esporte?').setRequired(false);
 
-  // Questionário Construcional – Bloco 3
   form.addPageBreakItem().setTitle('Questionário Construcional – Bloco 3: O que gostaria de fazer');
-  form.addParagraphTextItem().setTitle('O que você gostaria de mudar no seu treino ou competição?').setRequired(false);
-  form.addParagraphTextItem().setTitle('Tem algo que você vê outros atletas fazendo e gostaria de aprender também?').setRequired(false);
-  form.addParagraphTextItem().setTitle('Quais habilidades você gostaria de melhorar (força, técnica, foco, controle emocional…)').setRequired(false);
-  form.addParagraphTextItem().setTitle('O que poderia te ajudar a lidar melhor com erros, frustrações ou derrotas?').setRequired(false);
+  form.addParagraphTextItem().setTitle('O que você gostaria de mudar no treino/competição?').setRequired(false);
+  form.addParagraphTextItem().setTitle('Algo que vê outros atletas fazendo e gostaria de aprender?').setRequired(false);
+  form.addParagraphTextItem().setTitle('Quais habilidades gostaria de melhorar (técnica, foco, controle emocional…)?').setRequired(false);
+  form.addParagraphTextItem().setTitle('O que poderia ajudar a lidar melhor com erros/frustrações/derrotas?').setRequired(false);
 
-  // Questionário Construcional – Bloco 4
   form.addPageBreakItem().setTitle('Questionário Construcional – Bloco 4: Apoios e recursos');
-  form.addParagraphTextItem().setTitle('O que já existe no seu ambiente (equipe, técnico, família) que ajuda você a ir melhor?').setRequired(false);
-  form.addParagraphTextItem().setTitle('Que tipo de ajuda ou suporte você sente falta hoje?').setRequired(false);
-  form.addParagraphTextItem().setTitle('Se pudesse montar o treino ou competição dos sonhos, como seria?').setRequired(false);
-  form.addParagraphTextItem().setTitle('Que pequenas mudanças já fariam diferença para você agora?').setRequired(false);
+  form.addParagraphTextItem().setTitle('O que no seu ambiente já ajuda você a ir melhor?').setRequired(false);
+  form.addParagraphTextItem().setTitle('Que tipo de suporte você sente falta hoje?').setRequired(false);
+  form.addParagraphTextItem().setTitle('Se pudesse montar o treino/competição dos sonhos, como seria?').setRequired(false);
+  form.addParagraphTextItem().setTitle('Que pequenas mudanças já fariam diferença agora?').setRequired(false);
 
-  Logger.log('Formulário de cadastro do atleta criado: ' + form.getEditUrl());
+  Logger.log('Cadastro do atleta criado: ' + form.getEditUrl());
   Logger.log('Link para respostas: ' + form.getPublishedUrl());
 }
 
 /**
- * Função mestre que cria todos os formulários descritos acima. Execute
- * esta função para gerar todos os formulários de uma só vez.
+ * Função mestre: cria todos os formulários.
  */
 function createAllForms() {
   createDailyForm();
