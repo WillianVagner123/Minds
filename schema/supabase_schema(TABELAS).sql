@@ -317,7 +317,7 @@ create table if not exists analysis_vectors (
   athlete_id text not null,
   data date not null,
   source text not null,
-  embedding vector(256),
+  embedding vector(1536),
   metadata jsonb,
   inserted_at timestamptz default now()
 );
