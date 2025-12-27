@@ -9,14 +9,30 @@ create extension if not exists vector; -- pgvector (para analysis_vectors)
 
 -- =========================
 -- 0) REGRAS / CONFIG (cache de regras do GitHub)
+-- 1 arquivo JSON = 1 linha
 -- =========================
 create table if not exists scoring_rules (
-  key text primary key,                  -- ex: 'attention_levels', 'red_flags', 'scoring_engine', 'questionnaire_correlation_rules'
-  source_url text,                       -- URL do raw no GitHub
-  rules jsonb not null default '{}'::jsonb,
-  version int,
-  updated_at timestamptz default now()
+  key text primary key,                  -- ex: 'attention_levels', 'red_flags', 'scoring_engine', etc
+  source_url text not null,              -- URL raw do GitHub
+  content jsonb not null,                -- JSON inteiro do arquivo
+  etag text,                             -- opcional (cache HTTP)
+  sha text,                              -- opcional (hash/commit)
+  version int,                           -- opcional (se o JSON tiver version)
+  updated_at timestamptz not null default now()
 );
+
+create or replace function set_scoring_rules_updated_at()
+returns trigger language plpgsql as $$
+begin
+  new.updated_at = now();
+  return new;
+end $$;
+
+drop trigger if exists trg_scoring_rules_updated_at on scoring_rules;
+
+create trigger trg_scoring_rules_updated_at
+before update on scoring_rules
+for each row execute function set_scoring_rules_updated_at();
 
 -- =========================
 -- 1) CADASTRO DO ATLETA
@@ -316,40 +332,11 @@ create table if not exists analysis_vectors (
   athlete_id text not null,
   data date not null,
   source text not null,             -- ex: 'daily_report', 'weekly_report', 'construcional_summary'
-  embedding vector(256),
+  embedding vector(1536),
   metadata jsonb,
   inserted_at timestamptz default now()
 );
 
 create index if not exists analysis_vectors_embedding_idx
 on analysis_vectors using ivfflat (embedding) with (lists = 100);
-
-
--- ===========================================================
--- 📜 SCORING RULES (SINCRONIZADAS DO GITHUB)
--- Cada arquivo JSON vira uma linha
--- ===========================================================
-
-create table if not exists scoring_rules (
-  key text primary key,              -- ex: 'attention_levels'
-  source_url text not null,          -- raw github url
-  content jsonb not null,            -- JSON inteiro do arquivo
-  etag text,                         -- opcional (cache HTTP)
-  sha text,                          -- opcional (hash/commit)
-  updated_at timestamptz not null default now()
-);
-
--- trigger para auto atualizar updated_at
-create or replace function set_scoring_rules_updated_at()
-returns trigger language plpgsql as $$
-begin
-  new.updated_at = now();
-  return new;
-end $$;
-
-drop trigger if exists trg_scoring_rules_updated_at on scoring_rules;
-
-create trigger trg_scoring_rules_updated_at
-before update on scoring_rules
-for each row execute function set_scoring_rules_updated_at();
 
