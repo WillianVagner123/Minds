@@ -1,7 +1,18 @@
 {
-  "A": "Estado agudo desfavorável (BRUMS)",
-  "B": "Padrão negativo (>=3 dias) / alta instabilidade",
-  "C": "Contexto amplificador (clima motivacional / evento crítico / histórico funcional)",
+  "A1": "BRUMS: vigor baixo + DTH >= médio (agudo)",
+  "A2": "BRUMS: vigor baixo + DTH alto (agudo crítico)",
+  "A3": "BRUMS: vigor alto + DTH alto (hiperativação sob estresse)",
+  "A4": "BRUMS: vigor médio + DTH alto (estresse agudo relevante)",
+  "A5": "BRUMS: vigor baixo (fadiga/baixa energia)",
+  "A6": "BRUMS: DTH extremo (z>=+2.5)",
+  "A7": "BRUMS: vigor extremamente baixo (z<=-2.5)",
+
+  "B1": "BRUMS: DTH alto >=3 dias (padrão)",
+  "B2": "BRUMS: vigor baixo >=3 dias (padrão)",
+  "B3": "BRUMS: volatilidade DTH alta (7d)",
+  "B4": "BRUMS: volatilidade vigor alta (7d)",
+  "B5": "BRUMS: queda abrupta vigor (1d)",
+  "B6": "BRUMS: subida abrupta DTH (1d)",
 
   "C1": "Construcional: risco alto + proteção baixa",
   "C2": "Construcional: apoio ambiental baixo",
@@ -9,5 +20,13 @@
 
   "D1": "Dieta: adesão baixa sustentada (>=3 dias)",
   "D2": "Dieta: desconforto GI alto no dia",
-  "D3": "Dieta: risco de disponibilidade energética reportado"
+  "D3": "Dieta: risco de disponibilidade energética reportado",
+
+  "X1": "Cruzamento: BRUMS ambíguo + coping baixo (ACSI)",
+  "X2": "Cruzamento: BRUMS ambíguo + pressão baixa (ACSI) + autoeficácia baixa (GSES)",
+  "X3": "Cruzamento: BRUMS desfavorável + RESTQ baixo (padrão acumulado)",
+  "X4": "Cruzamento: BRUMS crítico + EGO alto (PMCSQ-2) (contexto amplificador)",
+  "X5": "Cruzamento: BRUMS ambíguo + construcional (risco alto/proteção baixa)",
+  "X6": "Cruzamento: BRUMS desfavorável + adesão baixa sustentada (dieta) (padrão misto)",
+  "X7": "Cruzamento: estado desfavorável + risco de disponibilidade energética (amplificador biológico)"
 }
