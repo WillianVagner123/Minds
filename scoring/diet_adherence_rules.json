@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "adherence_levels": {
+    "high": ">=80",
+    "medium": ">=60 and <80",
+    "low": "<60"
+  },
+  "risk_signals": {
+    "energy_availability_risk": { "true": "==true" },
+    "missed_meals": { "high": ">=2", "moderate": "==1", "low": "==0" },
+    "gi_distress": { "high": ">=7", "moderate": ">=4 and <7", "low": "<4" }
+  },
+  "flags": [
+    {
+      "flag": "D1",
+      "class": "B",
+      "description": "Adesão baixa sustentada (>=3 dias) ou queda relevante",
+      "condition": "adherence_level == 'low' && adherence_low_days >= 3"
+    },
+    {
+      "flag": "D2",
+      "class": "A",
+      "description": "Sinal agudo: desconforto GI alto no dia (pode elevar custo funcional do treino)",
+      "condition": "gi_distress == 'high'"
+    },
+    {
+      "flag": "D3",
+      "class": "C",
+      "description": "Risco de disponibilidade energética reportado (contexto biológico amplificador)",
+      "condition": "energy_availability_risk == true"
+    }
+  ]
+}
