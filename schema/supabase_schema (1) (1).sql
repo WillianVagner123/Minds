@@ -317,3 +317,7 @@ create table if not exists analysis_vectors (
   metadata jsonb,
   inserted_at timestamp with time zone default now()
 );
+-- Índice para busca vetorial (ajustar lists conforme necessidade)
+create index if not exists analysis_vectors_embedding_idx
+on analysis_vectors
+using ivfflat (embedding) with (lists = 100);
