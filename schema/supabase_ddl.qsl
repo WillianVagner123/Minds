@@ -1,0 +1,325 @@
+-- ===========================================================
+-- 🎯 MINDS PERFORMANCE – DDL (TABELAS / EXTENSÕES)
+-- ===========================================================
+
+-- =========================
+-- EXTENSÕES
+-- =========================
+create extension if not exists vector; -- pgvector (para analysis_vectors)
+
+-- =========================
+-- 0) REGRAS / CONFIG (cache de regras do GitHub)
+-- =========================
+create table if not exists scoring_rules (
+  key text primary key,                  -- ex: 'attention_levels', 'red_flags', 'scoring_engine', 'questionnaire_correlation_rules'
+  source_url text,                       -- URL do raw no GitHub
+  rules jsonb not null default '{}'::jsonb,
+  version int,
+  updated_at timestamptz default now()
+);
+
+-- =========================
+-- 1) CADASTRO DO ATLETA
+-- =========================
+create table if not exists athlete_registration (
+  id bigserial primary key,
+  athlete_id text not null,
+  data date default now(),
+  payload jsonb,
+  ideal_weight_kg numeric,
+  inserted_at timestamptz default now()
+);
+
+create index if not exists athlete_registration_athlete_id_idx
+on athlete_registration (athlete_id, inserted_at desc);
+
+-- =========================
+-- 2) BRUMS + CHECK-IN DIÁRIO (humor + treino)
+-- =========================
+create table if not exists brums_analysis (
+  id bigserial primary key,
+  athlete_id text not null,
+  data date,
+
+  dth numeric,
+  vigor numeric,
+  dth_minus numeric,
+  carga numeric,
+
+  weight_kg numeric,
+  pre_post_moment text,
+  training_modality text,
+  training_time numeric,
+
+  inserted_at timestamptz default now()
+);
+
+create index if not exists brums_analysis_athlete_date_idx
+on brums_analysis (athlete_id, data desc);
+
+-- =========================
+-- 2B) NUTRIÇÃO – CHECK-IN DIÁRIO (novo)
+-- (deriva do seu Daily Form: adesão, missed_meals, energy risk, GI distress)
+-- =========================
+create table if not exists diet_daily (
+  id bigserial primary key,
+  athlete_id text not null,
+  data date not null,
+
+  adherence_score numeric,              -- 1..5
+  missed_meals text,                    -- 'Não' | 'Sim, 1 refeição' | 'Sim, 2 ou mais'
+  energy_availability_risk boolean,     -- Sim/Não
+  gi_distress numeric,                  -- 0..10
+
+  inserted_at timestamptz default now()
+);
+
+create index if not exists diet_daily_athlete_date_idx
+on diet_daily (athlete_id, data desc);
+
+-- =========================
+-- 3) ACSI-28BR
+-- =========================
+create table if not exists acsi_analysis (
+  id bigserial primary key,
+  athlete_id text not null,
+  data date,
+
+  media numeric,
+  metas_preparacao numeric,
+  relacao_treinador numeric,
+  concentracao numeric,
+  confianca_motivacao numeric,
+  pico_pressao numeric,
+  adversidade numeric,
+  ausencia_preocupacao numeric,
+
+  inserted_at timestamptz default now()
+);
+
+create index if not exists acsi_analysis_athlete_date_idx
+on acsi_analysis (athlete_id, data desc);
+
+-- =========================
+-- 4) GSES-12
+-- =========================
+create table if not exists gses_analysis (
+  id bigserial primary key,
+  athlete_id text not null,
+  data date,
+
+  media numeric,
+  autorregulacao numeric,
+
+  inserted_at timestamptz default now()
+);
+
+create index if not exists gses_analysis_athlete_date_idx
+on gses_analysis (athlete_id, data desc);
+
+-- =========================
+-- 5) PMCSQ-2
+-- =========================
+create table if not exists pmcsq_analysis (
+  id bigserial primary key,
+  athlete_id text not null,
+  data date,
+
+  clima_tarefa numeric,
+  clima_ego numeric,
+  coletivo numeric,
+  clima_treino_desafiador numeric,
+  clima_ego_preferido numeric,
+  punicao_erros numeric,
+
+  inserted_at timestamptz default now()
+);
+
+create index if not exists pmcsq_analysis_athlete_date_idx
+on pmcsq_analysis (athlete_id, data desc);
+
+-- =========================
+-- 6) RESTQ-Sport (Atleta)
+-- =========================
+create table if not exists restq_analysis (
+  id bigserial primary key,
+  athlete_id text not null,
+  data date,
+
+  media numeric,
+  sono_bemestar numeric,
+  problemas_treino numeric,
+
+  inserted_at timestamptz default now()
+);
+
+create index if not exists restq_analysis_athlete_date_idx
+on restq_analysis (athlete_id, data desc);
+
+-- =========================
+-- 7) CBAS / LSS – treinador avaliado pelo atleta (semestral)
+-- =========================
+create table if not exists cbas_analysis (
+  id bigserial primary key,
+  athlete_id text not null,
+  data date,
+
+  tecnica numeric,
+  planejamento numeric,
+  motivacional numeric,
+  relacao numeric,
+  aversivos numeric,
+
+  tecnica_chave numeric,
+  planejamento_chave numeric,
+  motivacional_chave numeric,
+  relacao_chave numeric,
+  aversivos_chave numeric,
+
+  inserted_at timestamptz default now()
+);
+
+create index if not exists cbas_analysis_athlete_date_idx
+on cbas_analysis (athlete_id, data desc);
+
+-- =========================
+-- 8) WEEKLY (modelo qualitativo semanal)
+-- =========================
+create table if not exists weekly_analysis (
+  id bigserial primary key,
+  athlete_id text not null,
+  start_date date,
+
+  desempenho numeric,
+  adesao_nutricional numeric,
+
+  dieta_comentarios text,
+  cansaco_acao text,
+  semana_comentarios text,
+  eventos text,
+
+  inserted_at timestamptz default now()
+);
+
+create index if not exists weekly_analysis_athlete_week_idx
+on weekly_analysis (athlete_id, start_date desc);
+
+-- =========================
+-- 9) TRAINING LOAD (semanal)
+-- =========================
+create table if not exists training_load_analysis (
+  id bigserial primary key,
+  athlete_id text not null,
+  week_start date,
+
+  weekly_load numeric,
+  monotonia numeric,
+  strain numeric,
+  readiness numeric,
+  acwr numeric,
+
+  inserted_at timestamptz default now()
+);
+
+create index if not exists training_load_analysis_athlete_week_idx
+on training_load_analysis (athlete_id, week_start desc);
+
+-- =========================
+-- 10) CONSTRUCIONAL – RAW (texto) e ANALYSIS (resultado do n8n)
+-- =========================
+create table if not exists construcional_raw (
+  id bigserial primary key,
+  athlete_id text not null,
+  submitted_at timestamptz default now(),
+
+  -- opcional: você pode separar por blocos (1..4) ou guardar tudo aqui
+  bloco_1 text,
+  bloco_2 text,
+  bloco_3 text,
+  bloco_4 text,
+
+  -- status do pipeline
+  status text not null default 'pending',  -- pending | sent_to_n8n | analyzed | error
+  last_error text
+);
+
+create index if not exists construcional_raw_athlete_submitted_idx
+on construcional_raw (athlete_id, submitted_at desc);
+
+create table if not exists construcional_analysis (
+  id bigserial primary key,
+  construcional_raw_id bigint not null references construcional_raw(id) on delete cascade,
+
+  athlete_id text not null,
+  analyzed_at timestamptz default now(),
+
+  -- os 4 campos semânticos (saída do n8n / LLM)
+  repertorio_protetor text,   -- ex: low|medium|high
+  repertorio_risco text,      -- ex: low|medium|high
+  apoio_ambiental text,       -- ex: low|medium|high
+  claridade_metas text,       -- ex: low|medium|high
+
+  -- rastreabilidade
+  model_name text,
+  confidence numeric,
+  explanation jsonb
+);
+
+create index if not exists construcional_analysis_athlete_idx
+on construcional_analysis (athlete_id, analyzed_at desc);
+
+-- =========================
+-- 11) OUTBOX / FILA PARA O N8N (pull)
+-- =========================
+create table if not exists analysis_jobs (
+  id bigserial primary key,
+  job_type text not null,          -- 'CONSTRUCIONAL_EXTRACT' | 'SCORING_RUN' | etc
+  athlete_id text,
+  ref_table text,
+  ref_id bigint,
+  payload jsonb not null default '{}'::jsonb,
+  status text not null default 'queued',  -- queued|processing|done|error
+  tries int not null default 0,
+  last_error text,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+
+create index if not exists analysis_jobs_status_idx
+on analysis_jobs (status, created_at);
+
+-- =========================
+-- 12) PINGO SCORING OUTPUT (resultado final do motor)
+-- (espelha seu scoring_engine: attention_level, flags, explainability)
+-- =========================
+create table if not exists pingo_scoring_output (
+  id bigserial primary key,
+  athlete_id text not null,
+  reference_date date not null,      -- dia do check-in / agregação
+  attention_level int not null,      -- 0..3
+  flag_count int not null,
+  flags jsonb not null default '[]'::jsonb,         -- array de flags (ex: ["RF_MOOD_1","X3"])
+  rules_triggered jsonb default '[]'::jsonb,        -- rastreio do que disparou
+  thresholds_used jsonb default '{}'::jsonb,        -- rastreio de cortes
+  summary text,                                       -- resumo “humano”
+  created_at timestamptz default now()
+);
+
+create unique index if not exists pingo_scoring_output_unique_idx
+on pingo_scoring_output (athlete_id, reference_date);
+
+-- =========================
+-- 13) VETORES (embeddings) – gerados no n8n (etapa final)
+-- =========================
+create table if not exists analysis_vectors (
+  id bigserial primary key,
+  athlete_id text not null,
+  data date not null,
+  source text not null,             -- ex: 'daily_report', 'weekly_report', 'construcional_summary'
+  embedding vector(256),
+  metadata jsonb,
+  inserted_at timestamptz default now()
+);
+
+create index if not exists analysis_vectors_embedding_idx
+on analysis_vectors using ivfflat (embedding) with (lists = 100);
