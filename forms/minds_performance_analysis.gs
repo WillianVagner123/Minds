@@ -43,25 +43,77 @@ var COL = {
 };
 
 /* =========================
-   N8N
+   N8N (1 endpoint por kind)
+   ✅ Baseado no padrão:
+   https://autowebhook.opingo.com.br/webhook/RunScoring
 ========================= */
 
-var N8N_CONSTRUCIONAL_WEBHOOK_URL = "https://autowebhook.opingo.com.br/webhook/Construcional";
-var N8N_RUNSCORING_WEBHOOK_URL   = "https://autowebhook.opingo.com.br/webhook/RunScoring";
+var N8N_WEBHOOK_BASE = "https://autowebhook.opingo.com.br/webhook/";
 
+var N8N_WEBHOOK = {
+  daily:        N8N_WEBHOOK_BASE + "Daily",
+  weekly:       N8N_WEBHOOK_BASE + "Weekly",
+  quarterly:    N8N_WEBHOOK_BASE + "Quarterly",
+  semiannual:   N8N_WEBHOOK_BASE + "Semiannual",
+  registration: N8N_WEBHOOK_BASE + "Registration",
+  restq_trainer:N8N_WEBHOOK_BASE + "RestqTrainer",
+  construcional:N8N_WEBHOOK_BASE + "Construcional",
+  run_scoring:  N8N_WEBHOOK_BASE + "RunScoring"
+};
+
+// Se TRUE: GAS chama RunScoring além do webhook do kind.
+// Se FALSE: você chama RunScoring dentro do fluxo do kind no n8n.
+var ALSO_CALL_RUNSCORING_FROM_GAS = true;
+
+function postJson_(url, payloadObj) {
+  var options = {
+    method: "post",
+    contentType: "application/json",
+    payload: JSON.stringify(payloadObj),
+    muteHttpExceptions: true
+  };
+  var response = UrlFetchApp.fetch(url, options);
+  Logger.log("n8n POST " + url + " -> HTTP " + response.getResponseCode() + " body=" + response.getContentText());
+  return response;
+}
+
+/**
+ * Webhook específico do questionário (kind).
+ * Payload padrão para TODOS os kinds.
+ */
+function sendKindToN8n(kind, athleteId, referenceDate, rowObj, pushedInfo) {
+  var url = N8N_WEBHOOK[kind];
+  if (!url) throw new Error("Webhook n8n não configurado para kind=" + kind);
+
+  var payload = {
+    kind: kind,
+    athlete_id: athleteId || null,
+    reference_date: referenceDate || null,  // YYYY-MM-DD (data do registro)
+    observed_at: iso_(new Date()),          // timestamp do envio
+    source: "master_sheet",
+    master_sheet_id: MASTER_SHEET_ID || null,
+
+    // debug/trace (pode remover se quiser “enxugar”)
+    row: rowObj || null,
+    pushed: pushedInfo || null
+  };
+
+  postJson_(url, payload);
+}
+
+/**
+ * CONSTRUCIONAL: mantém payload compatível com seu fluxo (construcional_raw_id + texto).
+ * (Se você quiser padronizar 100% no futuro, eu adapto seu n8n para aceitar o payload padrão.)
+ */
 function sendConstrucionalToN8n(construcionalRawId, athleteId, texto) {
   var payload = { construcional_raw_id: construcionalRawId, athlete_id: athleteId, texto: texto };
-  var options = { method: "post", contentType: "application/json", payload: JSON.stringify(payload), muteHttpExceptions: true };
-  var response = UrlFetchApp.fetch(N8N_CONSTRUCIONAL_WEBHOOK_URL, options);
-  Logger.log("Construcional webhook status: " + response.getResponseCode() + " body=" + response.getContentText());
+  postJson_(N8N_WEBHOOK.construcional, payload);
 }
 
 function sendRunScoringToN8n(athleteId, referenceDate) {
   var payload = { athlete_id: athleteId };
   if (referenceDate) payload.reference_date = referenceDate;
-  var options = { method: "post", contentType: "application/json", payload: JSON.stringify(payload), muteHttpExceptions: true };
-  var response = UrlFetchApp.fetch(N8N_RUNSCORING_WEBHOOK_URL, options);
-  Logger.log("RunScoring webhook status: " + response.getResponseCode() + " body=" + response.getContentText());
+  postJson_(N8N_WEBHOOK.run_scoring, payload);
 }
 
 /* =========================
@@ -182,6 +234,41 @@ function supaUpsertByAthleteDate_(cfg, table, athleteId, dateField, dateStr, rec
   }
 }
 
+/**
+ * UPSERT via PostgREST (Supabase) usando on_conflict
+ * - conflictCols: ["col1","col2"]
+ */
+function supaUpsert_(cfg, table, rec, conflictCols) {
+  if (!conflictCols || !conflictCols.length) {
+    throw new Error("supaUpsert_: conflictCols obrigatório");
+  }
+
+  var url = supaUrl_(cfg,
+    "/rest/v1/" + encodeURIComponent(table) +
+    "?on_conflict=" + encodeURIComponent(conflictCols.join(","))
+  );
+
+  var headers = supaHeaders_(cfg);
+  headers.Prefer = "return=representation,resolution=merge-duplicates";
+
+  var res = UrlFetchApp.fetch(url, {
+    method: "post",
+    contentType: "application/json",
+    payload: JSON.stringify([rec]),
+    muteHttpExceptions: true,
+    headers: headers
+  });
+
+  var code = res.getResponseCode();
+  var body = res.getContentText();
+  Logger.log("SUPABASE upsert " + table + " HTTP " + code + " -> " + body);
+
+  if (code < 200 || code >= 300) {
+    throw new Error("Supabase UPSERT " + table + " failed (" + code + "): " + body);
+  }
+  try { return JSON.parse(body || "[]"); } catch(e) { return []; }
+}
+
 /* =========================
    META (kind + payload)
 ========================= */
@@ -246,7 +333,8 @@ function health_() {
     masterSheetId: ss.getId(),
     masterSheetUrl: ss.getUrl(),
     tabs: TAB,
-    supabaseConfigured: !!(cfg.url && cfg.key)
+    supabaseConfigured: !!(cfg.url && cfg.key),
+    n8n_webhooks: N8N_WEBHOOK
   });
 }
 
@@ -291,9 +379,17 @@ function pushLatest_(e) {
 
   var pushedInfo = writeKindToSupabase_(cfg, kind, athlete, row);
 
-  if (score && kind !== "construcional" && kind !== "registration") {
-    var ts = getRowTimestamp_(row);
-    if (ts) sendRunScoringToN8n(athlete, dateOnly_(ts));
+  var ts = getRowTimestamp_(row) || new Date();
+  var ref = dateOnly_(ts);
+
+  // ✅ webhook específico do kind (exceto construcional, pois já manda payload próprio com id)
+  if (kind !== "construcional") {
+    sendKindToN8n(kind, athlete, ref, row, pushedInfo);
+  }
+
+  // ✅ opcional: chama scoring
+  if (score && ALSO_CALL_RUNSCORING_FROM_GAS && kind !== "construcional" && kind !== "registration") {
+    sendRunScoringToN8n(athlete, ref);
   }
 
   return json_({ ok: true, kind: kind, athlete: athlete, found: true, pushed: true, pushedInfo: pushedInfo });
@@ -319,12 +415,18 @@ function pushRange_(e) {
   var pushed = 0, errors = [];
   for (var i = 0; i < rows.length; i++) {
     try {
-      writeKindToSupabase_(cfg, kind, athlete, rows[i]);
+      var info = writeKindToSupabase_(cfg, kind, athlete, rows[i]);
       pushed++;
 
-      if (score && kind !== "construcional" && kind !== "registration") {
-        var ts = getRowTimestamp_(rows[i]);
-        if (ts) sendRunScoringToN8n(athlete, dateOnly_(ts));
+      var ts = getRowTimestamp_(rows[i]) || new Date();
+      var ref = dateOnly_(ts);
+
+      if (kind !== "construcional") {
+        sendKindToN8n(kind, athlete, ref, rows[i], info);
+      }
+
+      if (score && ALSO_CALL_RUNSCORING_FROM_GAS && kind !== "construcional" && kind !== "registration") {
+        sendRunScoringToN8n(athlete, ref);
       }
     } catch (err) {
       errors.push({ index: i, error: String(err && err.message ? err.message : err) });
@@ -346,21 +448,17 @@ function writeKindToSupabase_(cfg, kind, athlete, rowObj) {
   if (kind === "registration")  return writeRegistration_(cfg, athlete, rowObj);
   if (kind === "construcional") return writeConstrucional_(cfg, athlete, rowObj);
 
-  // ✅ agora GRAVA no Supabase
+  // ✅ grava no Supabase
   if (kind === "restq_trainer") return writeRestqTrainer_(cfg, athlete, rowObj);
 
   throw new Error("Unhandled kind: " + kind);
 }
 
 function writeRestqTrainer_(cfg, athlete, rowObj) {
-  // athlete aqui é o "ATHLETE_ID" vindo do formulário, mas no restq_trainer
-  // ele pode ser opcional. Vamos guardar em athlete_id (nullable).
   var ts = getRowTimestamp_(rowObj) || new Date();
   var dataStr = dateOnly_(ts);
 
   var m = restqTrainerMetrics_(rowObj);
-
-  // meta padrão (tem que existir no seu script)
   var meta = addMeta_("restq_trainer", rowObj);
 
   var trainerId = (m.trainer_id || pickByPrefix_(rowObj, ["TR_ID", "TRAINER_ID"]) || "").toString().trim();
@@ -373,7 +471,6 @@ function writeRestqTrainer_(cfg, athlete, rowObj) {
     trainer_name: trainerName || null,
     athlete_id: (athlete || "").toString().trim() || null,
     data: dataStr,
-
     mean: isFinite(m.mean) ? m.mean : null,
 
     kind: meta.kind,
@@ -382,7 +479,7 @@ function writeRestqTrainer_(cfg, athlete, rowObj) {
     master_sheet_id: meta.master_sheet_id
   };
 
-  // ✅ use UPSERT (recomendado)
+  // ✅ tabela destino: restq_trainer_analysis (deve existir no Supabase)
   supaUpsert_(cfg, "restq_trainer_analysis", rec, ["trainer_id", "data"]);
   return { restq_trainer_analysis: "upsert", data: dataStr, trainer_id: trainerId };
 }
@@ -699,6 +796,7 @@ function writeConstrucional_(cfg, athlete, rowObj) {
   var inserted = supaInsert_(cfg, "construcional_raw", rec);
   var id = (inserted && inserted[0] && inserted[0].id) ? inserted[0].id : null;
 
+  // mantém payload específico do seu fluxo
   sendConstrucionalToN8n(id, athlete, texto || b1 || "");
 
   return { construcional_raw: "insert", id: id };
@@ -942,7 +1040,6 @@ function restqTrainerMetrics_(row) {
 
 /* ----- REGISTRATION METRICS ----- */
 function registrationMetrics_(row) {
-  // Athlete ID (CPF) pode estar no REG_DOC; nome no REG_NAME; time pode vir de campo livre “Clube atual…”
   var athleteName = String(pickByPrefix_(row, ["REG_ATHLETE_NAME", "REG_NAME", "ATHLETE_NAME", "NOME_ATLETA", "Nome completo"]) || "").trim();
   var teamName = String(pickByPrefix_(row, [
     "REG_TEAM_NAME", "TEAM_NAME", "NOME_TIME", "TIME",
@@ -999,7 +1096,6 @@ function table_(sheet) {
 /** extrai athleteId do row conforme kind (registration aceita REG_ID/REG_DOC) */
 function athleteIdFromRow_(kind, rowObj) {
   if (kind === "registration") {
-    // prioridade: CPF (REG_DOC) -> REG_ID -> ATHLETE_ID
     var cpf = String(pickByPrefix_(rowObj, ["REG_DOC", "CPF", "Documento (CPF)"]) || "").replace(/\D/g, "");
     if (cpf) return cpf;
     var rid = String(pickByPrefix_(rowObj, ["REG_ID", "ID interno", "ID do atleta"]) || "").trim();
@@ -1109,52 +1205,71 @@ function onFormSubmitMaster_(e) {
     var rowObj = {};
     for (var i = 0; i < headers.length; i++) rowObj[String(headers[i] || "").trim()] = values[i];
 
-    // timestamp robusto (evita 1969-12-31)
+    // timestamp robusto
     var ts = getRowTimestamp_(rowObj);
     if (!ts) {
       Logger.log("onFormSubmitMaster_: timestamp inválido/ausente. Cheque cabeçalho do Forms.");
       return;
     }
+    var ref = dateOnly_(ts);
 
     if (sheetName === TAB.daily) {
       var athlete = athleteIdFromRow_("daily", rowObj);
       if (!athlete) { Logger.log("onFormSubmitMaster_: ATHLETE_ID vazio (daily)"); return; }
-      writeDaily_(cfg, athlete, rowObj);
-      sendRunScoringToN8n(athlete, dateOnly_(ts));
+
+      var info = writeDaily_(cfg, athlete, rowObj);
+
+      sendKindToN8n("daily", athlete, ref, rowObj, info);
+      if (ALSO_CALL_RUNSCORING_FROM_GAS) sendRunScoringToN8n(athlete, ref);
 
     } else if (sheetName === TAB.weekly) {
       var athlete2 = athleteIdFromRow_("weekly", rowObj);
       if (!athlete2) { Logger.log("onFormSubmitMaster_: ATHLETE_ID vazio (weekly)"); return; }
-      writeWeekly_(cfg, athlete2, rowObj);
-      sendRunScoringToN8n(athlete2, dateOnly_(ts));
+
+      var info2 = writeWeekly_(cfg, athlete2, rowObj);
+
+      sendKindToN8n("weekly", athlete2, ref, rowObj, info2);
+      if (ALSO_CALL_RUNSCORING_FROM_GAS) sendRunScoringToN8n(athlete2, ref);
 
     } else if (sheetName === TAB.quarterly) {
       var athlete3 = athleteIdFromRow_("quarterly", rowObj);
       if (!athlete3) { Logger.log("onFormSubmitMaster_: ATHLETE_ID vazio (quarterly)"); return; }
-      writeQuarterly_(cfg, athlete3, rowObj);
-      sendRunScoringToN8n(athlete3, dateOnly_(ts));
+
+      var info3 = writeQuarterly_(cfg, athlete3, rowObj);
+
+      sendKindToN8n("quarterly", athlete3, ref, rowObj, info3);
+      if (ALSO_CALL_RUNSCORING_FROM_GAS) sendRunScoringToN8n(athlete3, ref);
 
     } else if (sheetName === TAB.semiannual) {
       var athlete4 = athleteIdFromRow_("semiannual", rowObj);
       if (!athlete4) { Logger.log("onFormSubmitMaster_: ATHLETE_ID vazio (semiannual)"); return; }
-      writeSemiannual_(cfg, athlete4, rowObj);
-      sendRunScoringToN8n(athlete4, dateOnly_(ts));
+
+      var info4 = writeSemiannual_(cfg, athlete4, rowObj);
+
+      sendKindToN8n("semiannual", athlete4, ref, rowObj, info4);
+      if (ALSO_CALL_RUNSCORING_FROM_GAS) sendRunScoringToN8n(athlete4, ref);
 
     } else if (sheetName === TAB.registration) {
-      // cadastro pode usar REG_DOC (CPF) como athlete_id
       var athlete5 = athleteIdFromRow_("registration", rowObj);
       if (!athlete5) { Logger.log("onFormSubmitMaster_: REG_DOC/REG_ID vazio (registration)"); return; }
-      writeRegistration_(cfg, athlete5, rowObj);
+
+      var info5 = writeRegistration_(cfg, athlete5, rowObj);
+
+      sendKindToN8n("registration", athlete5, ref, rowObj, info5);
 
     } else if (sheetName === TAB.construcional) {
       var athlete6 = athleteIdFromRow_("construcional", rowObj);
       if (!athlete6) { Logger.log("onFormSubmitMaster_: ATHLETE_ID vazio (construcional)"); return; }
+
+      // writeConstrucional_ já chama webhook específico com construcional_raw_id
       writeConstrucional_(cfg, athlete6, rowObj);
 
     } else if (sheetName === TAB.restq_trainer) {
-      // não grava no supabase (por enquanto)
-      var athlete7 = athleteIdFromRow_("restq_trainer", rowObj);
-      writeKindToSupabase_(cfg, "restq_trainer", athlete7 || "trainer", rowObj);
+      var athlete7 = athleteIdFromRow_("restq_trainer", rowObj); // pode vir vazio; ok
+      var info7 = writeKindToSupabase_(cfg, "restq_trainer", athlete7 || "", rowObj);
+
+      sendKindToN8n("restq_trainer", athlete7 || null, ref, rowObj, info7);
+      // normalmente não roda scoring aqui (depende do seu motor)
     }
 
   } catch (err) {
@@ -1166,15 +1281,6 @@ function onFormSubmitMaster_(e) {
    PICK / TIMESTAMP (ROBUSTO)
 ========================= */
 
-/**
- * pickByPrefix_ robusto:
- * - aceita string OU array de prefixos (aliases)
- * - encontra chaves do tipo:
- *   "PREFIXO" (exato)
- *   "PREFIXO | ...", "PREFIXO|...", "PREFIXO : ...", "PREFIXO:..."
- *   variações com espaços / maiúsculas / acentos / chars invisíveis
- * - fallback: "contém" (apenas se prefixo >= 6 chars)
- */
 function pickByPrefix_(row, prefixOrList) {
   if (!row) return "";
 
@@ -1240,9 +1346,7 @@ function pickByPrefix_(row, prefixOrList) {
   return "";
 }
 
-/** Timestamp robusto: tenta vários aliases para “Carimbo de data/hora” */
 function getRowTimestamp_(rowObj) {
-  // aliases comuns do Forms/Sheets
   var raw = pickByPrefix_(rowObj, [
     COL.timestamp,
     "Timestamp",
@@ -1253,7 +1357,6 @@ function getRowTimestamp_(rowObj) {
     "Submission time"
   ]);
 
-  // fallback pelo índice exato, se existir
   if (!raw && rowObj && rowObj[COL.timestamp] != null) raw = rowObj[COL.timestamp];
 
   var d = toDate_(raw);
