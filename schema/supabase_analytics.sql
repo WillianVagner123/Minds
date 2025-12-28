@@ -90,32 +90,35 @@ left join latest_ideal li on li.athlete_id = b.athlete_id;
 -- -------------------------
 create or replace view public.diet_daily_view as
 select
-  d.*,  -- todas as colunas da tabela diet_daily
+  d.*,
 
-  -- nível de adesão categorizado
+  -- adherence_level conforme scoring/diet_adherence_rules.json
   case
     when d.adherence_score is null then null
-    when d.adherence_score <= 2 then 'low'
-    when d.adherence_score = 3 then 'medium'
-    else 'high'
+    when d.adherence_score >= 80 then 'high'
+    when d.adherence_score >= 60 then 'medium'
+    else 'low'
   end as adherence_level,
 
-  -- número de refeições perdidas (normalizado para inteiro)
+  -- missed_meals_n normalizado
   case
+    when d.missed_meals is null then null
     when d.missed_meals ilike '%2%' then 2
     when d.missed_meals ilike '%1%' then 1
     when d.missed_meals ilike 'não' or d.missed_meals ilike 'nao' then 0
     else null
   end as missed_meals_n,
 
-  -- flag GI
+  -- GI em faixa (low/moderate/high) conforme rules
   case
     when d.gi_distress is null then null
-    when d.gi_distress >= 7 then true
-    else false
-  end as gi_red_flag
+    when d.gi_distress >= 7 then 'high'
+    when d.gi_distress >= 4 then 'moderate'
+    else 'low'
+  end as gi_distress_level
 
 from diet_daily d;
+
 
 -- -------------------------
 -- ESCALAS: ACSI / GSES / PMCSQ / RESTQ / CBAS / WEEKLY / LOAD
