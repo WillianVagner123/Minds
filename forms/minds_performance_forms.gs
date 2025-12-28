@@ -729,34 +729,6 @@ function createRegistrationFormPrefixed() {
     .setChoices([research.createChoice('Sim'), research.createChoice('Não')])
     .setRequired(false);
   form.addParagraphTextItem().setTitle('Preferências sobre compartilhamento de relatórios (quem pode receber o quê)').setRequired(false);
-  // Deixa os blocos comportamentais e construcionais sem prefixos (texto livre)
-  form.addPageBreakItem().setTitle('Bloco – Análise do Comportamento');
-  form.addParagraphTextItem().setTitle('Descreva comportamentos‑problema (topografia, frequência, duração, intensidade)').setRequired(false);
-  form.addParagraphTextItem().setTitle('Contexto típico e antecedentes (A)').setRequired(false);
-  form.addParagraphTextItem().setTitle('Consequências (C) e possíveis consequências do comportamento').setRequired(false);
-  form.addParagraphTextItem().setTitle('Função provável do comportamento').setRequired(false);
-  form.addParagraphTextItem().setTitle('História de aprendizagem relevante').setRequired(false);
-  form.addParagraphTextItem().setTitle('Recursos/repertórios já presentes (autorregulação, coping, etc.)').setRequired(false);
-  form.addPageBreakItem().setTitle('Questionário Construcional – Bloco 1: O que você faz hoje');
-  form.addParagraphTextItem().setTitle('O que você já faz que te ajuda nos treinos e competições?').setRequired(false);
-  form.addParagraphTextItem().setTitle('O que você faz que às vezes atrapalha?').setRequired(false);
-  form.addParagraphTextItem().setTitle('Em quais situações se sente mais confiante?').setRequired(false);
-  form.addParagraphTextItem().setTitle('Em quais situações se sente inseguro(a) ou com dificuldade?').setRequired(false);
-  form.addPageBreakItem().setTitle('Questionário Construcional – Bloco 2: O que acontece depois');
-  form.addParagraphTextItem().setTitle('Quando você vai bem, o que costuma acontecer?').setRequired(false);
-  form.addParagraphTextItem().setTitle('Quando você não vai tão bem, o que acontece?').setRequired(false);
-  form.addParagraphTextItem().setTitle('O que mais te motiva a continuar treinando e competindo?').setRequired(false);
-  form.addParagraphTextItem().setTitle('Existe algo difícil/negativo que às vezes pesa no esporte?').setRequired(false);
-  form.addPageBreakItem().setTitle('Questionário Construcional – Bloco 3: O que gostaria de fazer');
-  form.addParagraphTextItem().setTitle('O que você gostaria de mudar no treino/competição?').setRequired(false);
-  form.addParagraphTextItem().setTitle('Algo que vê outros atletas fazendo e gostaria de aprender?').setRequired(false);
-  form.addParagraphTextItem().setTitle('Quais habilidades gostaria de melhorar (técnica, foco, controle emocional…)?').setRequired(false);
-  form.addParagraphTextItem().setTitle('O que poderia ajudar a lidar melhor com erros/frustrações/derrotas?').setRequired(false);
-  form.addPageBreakItem().setTitle('Questionário Construcional – Bloco 4: Apoios e recursos');
-  form.addParagraphTextItem().setTitle('O que no seu ambiente já ajuda você a ir melhor?').setRequired(false);
-  form.addParagraphTextItem().setTitle('Que tipo de suporte você sente falta hoje?').setRequired(false);
-  form.addParagraphTextItem().setTitle('Se pudesse montar o treino/competição dos sonhos, como seria?').setRequired(false);
-  form.addParagraphTextItem().setTitle('Que pequenas mudanças já fariam diferença agora?').setRequired(false);
   return form;
 }
 
@@ -794,4 +766,75 @@ function createAllFormsLinkedPrefixed() {
     registration: registration.getId(),
     master_sheet_id: master.getId()
   };
+}
+function createConstrucionalFormPrefixed() {
+  var form = FormApp.create(FORMS_PREFIX + "Questionário Construcional (4 blocos)");
+  form.setDescription(
+    "Questionário Construcional em 4 blocos (resposta em texto livre). " +
+    "Use o mesmo ATHLETE_ID do cadastro (CPF ou ID interno, conforme seu padrão)."
+  );
+
+  // Identificação mínima (para bater com athleteIdFromRow_ e writeConstrucional_)
+  form.addTextItem()
+    .setTitle("ATHLETE_ID | ID do atleta (CPF ou código MINDS)")
+    .setHelpText("Use o MESMO ID usado no cadastro para o sistema vincular corretamente.")
+    .setRequired(true);
+
+  form.addTextItem()
+    .setTitle("CONS_NAME | Nome (opcional)")
+    .setRequired(false);
+
+  // Bloco 1
+  form.addPageBreakItem().setTitle("Bloco 1: O que você faz hoje");
+  form.addParagraphTextItem()
+    .setTitle("CONS_BLOCO_1 | Bloco 1 – O que você faz hoje")
+    .setHelpText(
+      "Responda incluindo, se fizer sentido:\n" +
+      "• O que você já faz que te ajuda nos treinos e competições?\n" +
+      "• O que você faz que às vezes atrapalha?\n" +
+      "• Em quais situações se sente mais confiante?\n" +
+      "• Em quais situações se sente inseguro(a) ou com dificuldade?"
+    )
+    .setRequired(false);
+
+  // Bloco 2
+  form.addPageBreakItem().setTitle("Bloco 2: O que acontece depois");
+  form.addParagraphTextItem()
+    .setTitle("CONS_BLOCO_2 | Bloco 2 – O que acontece depois")
+    .setHelpText(
+      "Responda incluindo, se fizer sentido:\n" +
+      "• Quando você vai bem, o que costuma acontecer?\n" +
+      "• Quando você não vai tão bem, o que acontece?\n" +
+      "• O que mais te motiva a continuar treinando e competindo?\n" +
+      "• Existe algo difícil/negativo que às vezes pesa no esporte?"
+    )
+    .setRequired(false);
+
+  // Bloco 3
+  form.addPageBreakItem().setTitle("Bloco 3: O que gostaria de fazer");
+  form.addParagraphTextItem()
+    .setTitle("CONS_BLOCO_3 | Bloco 3 – O que gostaria de fazer")
+    .setHelpText(
+      "Responda incluindo, se fizer sentido:\n" +
+      "• O que você gostaria de mudar no treino/competição?\n" +
+      "• Algo que vê outros atletas fazendo e gostaria de aprender?\n" +
+      "• Quais habilidades gostaria de melhorar (técnica, foco, controle emocional…)?\n" +
+      "• O que poderia ajudar a lidar melhor com erros/frustrações/derrotas?"
+    )
+    .setRequired(false);
+
+  // Bloco 4
+  form.addPageBreakItem().setTitle("Bloco 4: Apoios e recursos");
+  form.addParagraphTextItem()
+    .setTitle("CONS_BLOCO_4 | Bloco 4 – Apoios e recursos")
+    .setHelpText(
+      "Responda incluindo, se fizer sentido:\n" +
+      "• O que no seu ambiente já ajuda você a ir melhor?\n" +
+      "• Que tipo de suporte você sente falta hoje?\n" +
+      "• Se pudesse montar o treino/competição dos sonhos, como seria?\n" +
+      "• Que pequenas mudanças já fariam diferença agora?"
+    )
+    .setRequired(false);
+
+  return form;
 }
