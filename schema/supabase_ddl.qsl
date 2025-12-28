@@ -417,3 +417,18 @@ alter table pingo_scoring_output add column if not exists payload jsonb;
 alter table restq_analysis add column if not exists trainer_id text;
 alter table restq_analysis add column if not exists trainer_name text;
 alter table restq_analysis add column if not exists mean numeric;
+
+-- Coluna source (origem dos dados) nas tabelas de análise
+alter table brums_analysis        add column if not exists source text;
+alter table weekly_analysis      add column if not exists source text;
+alter table acsi_analysis        add column if not exists source text;
+alter table cbas_analysis        add column if not exists source text;
+
+-- (recomendado) padronizar nas demais também
+alter table diet_daily           add column if not exists source text;
+alter table gses_analysis        add column if not exists source text;
+alter table pmcsq_analysis       add column if not exists source text;
+alter table restq_analysis       add column if not exists source text;
+alter table construcional_raw    add column if not exists source text;
+alter table pingo_scoring_output add column if not exists source text;
+
