@@ -207,65 +207,221 @@ from construcional_analysis c;
 -- É usada pelo n8n no webhook RunScoring.
 -- ===========================================================
 create or replace view public.pingo_scoring_inputs_view as
-with latest_brums as (
+with
+-- =========================
+-- BRUMS: último + histórico 7 dias (para padrão/instabilidade)
+-- =========================
+brums_last as (
   select distinct on (athlete_id)
+    athlete_id,
+    data as reference_date,
+    vigor_z,
+    dth_z
+  from public.brums_analysis_view
+  order by athlete_id, data desc, inserted_at desc
+),
+brums_hist as (
+  select
     athlete_id,
     data,
     vigor_z,
-    dth_z,
-    inserted_at
-  from brums_analysis_view
-  order by athlete_id, data desc, inserted_at desc
+    dth_z
+  from public.brums_analysis_view
+  where data >= current_date - interval '7 days'
 ),
-latest_diet as (
+brums_feats as (
+  select
+    bl.athlete_id,
+    bl.reference_date,
+    bl.vigor_z,
+    bl.dth_z,
+
+    -- estados conforme brums_rules.json
+    case
+      when bl.vigor_z >= 1 then 'high'
+      when bl.vigor_z <= -1 then 'low'
+      else 'medium'
+    end as vigor,
+
+    case
+      when bl.dth_z <= 0.5 then 'low'
+      when bl.dth_z <= 1.5 then 'medium'
+      else 'high'
+    end as dth,
+
+    -- padrão (contagem nos últimos 7d)
+    (select count(*) from brums_hist h
+      where h.athlete_id = bl.athlete_id
+        and (case when h.dth_z <= 0.5 then 'low'
+                  when h.dth_z <= 1.5 then 'medium'
+                  else 'high' end) = 'high'
+    ) as dth_high_days,
+
+    (select count(*) from brums_hist h
+      where h.athlete_id = bl.athlete_id
+        and (case when h.vigor_z >= 1 then 'high'
+                  when h.vigor_z <= -1 then 'low'
+                  else 'medium' end) = 'low'
+    ) as vigor_low_days,
+
+    -- instabilidade (volatilidade 7d)
+    (select stddev_samp(h.dth_z) from brums_hist h where h.athlete_id = bl.athlete_id) as dth_volatility_7d,
+    (select stddev_samp(h.vigor_z) from brums_hist h where h.athlete_id = bl.athlete_id) as vigor_volatility_7d,
+
+    -- deltas 1d (comparado com o dia anterior do próprio atleta)
+    (bl.vigor_z - (
+      select h.vigor_z
+      from public.brums_analysis_view h
+      where h.athlete_id = bl.athlete_id and h.data < bl.reference_date
+      order by h.data desc, h.inserted_at desc
+      limit 1
+    )) as vigor_delta_1d,
+
+    (bl.dth_z - (
+      select h.dth_z
+      from public.brums_analysis_view h
+      where h.athlete_id = bl.athlete_id and h.data < bl.reference_date
+      order by h.data desc, h.inserted_at desc
+      limit 1
+    )) as dth_delta_1d
+
+  from brums_last bl
+),
+
+-- =========================
+-- DIETA: último + “low days” 7d
+-- =========================
+diet_last as (
   select distinct on (athlete_id)
     athlete_id,
-    data,
+    data as reference_date,
     adherence_score,
     adherence_level,
     energy_availability_risk,
-    missed_meals_n,
-    gi_distress,
-    inserted_at
-  from diet_daily_view
+    missed_meals_n as missed_meals,
+    gi_distress_level
+  from public.diet_daily_view
   order by athlete_id, data desc, inserted_at desc
 ),
-latest_constr as (
+diet_feats as (
+  select
+    dl.*,
+    (select count(*) from public.diet_daily_view d
+      where d.athlete_id = dl.athlete_id
+        and d.data >= current_date - interval '7 days'
+        and d.adherence_level = 'low'
+    ) as adherence_low_days
+  from diet_last dl
+),
+
+-- =========================
+-- CONSTRUCIONAL: último (já categorizado low/medium/high)
+-- =========================
+constr_last as (
   select distinct on (athlete_id)
     athlete_id,
     repertorio_protetor,
     repertorio_risco,
     apoio_ambiental,
     claridade_metas,
-    analyzed_at
-  from construcional_analysis
+    analyzed_at as construcional_analyzed_at
+  from public.construcional_analysis
   order by athlete_id, analyzed_at desc
+),
+
+-- =========================
+-- ESCALAS para correlação (último registro)
+-- =========================
+acsi_last as (
+  select distinct on (athlete_id)
+    athlete_id,
+    adversidade,          -- coping_with_adversity
+    pico_pressao          -- peaking_under_pressure
+  from public.acsi_analysis
+  order by athlete_id, data desc, inserted_at desc
+),
+gses_last as (
+  select distinct on (athlete_id)
+    athlete_id,
+    media as gses_media,
+    (media - avg(media) over (partition by athlete_id))
+      / nullif(stddev_samp(media) over (partition by athlete_id), 0) as gses_media_z
+  from public.gses_analysis
+  order by athlete_id, data desc, inserted_at desc
+),
+restq_last as (
+  select distinct on (athlete_id)
+    athlete_id,
+    media as restq_media,
+    (media - avg(media) over (partition by athlete_id))
+      / nullif(stddev_samp(media) over (partition by athlete_id), 0) as restq_media_z
+  from public.restq_analysis
+  order by athlete_id, data desc, inserted_at desc
+),
+pmcsq_last as (
+  select distinct on (athlete_id)
+    athlete_id,
+    clima_ego,
+    (clima_ego - avg(clima_ego) over (partition by athlete_id))
+      / nullif(stddev_samp(clima_ego) over (partition by athlete_id), 0) as clima_ego_z
+  from public.pmcsq_analysis
+  order by athlete_id, data desc, inserted_at desc
 )
+
 select
   b.athlete_id,
-  b.data as reference_date,
+  b.reference_date,
 
-  -- BRUMS
+  -- BRUMS (z + estados + padrões)
   b.vigor_z,
   b.dth_z,
+  b.vigor,
+  b.dth,
+  b.dth_high_days,
+  b.vigor_low_days,
+  b.dth_volatility_7d,
+  b.vigor_volatility_7d,
+  b.vigor_delta_1d,
+  b.dth_delta_1d,
 
-  -- DIETA
+  -- DIETA (já no formato esperado pelas rules)
   d.adherence_score,
   d.adherence_level,
+  d.adherence_low_days,
   d.energy_availability_risk,
-  d.missed_meals_n as missed_meals,
-  d.gi_distress,
+  d.missed_meals,
+  d.gi_distress_level as gi_distress,
 
   -- CONSTRUCIONAL
   c.repertorio_protetor,
   c.repertorio_risco,
   c.apoio_ambiental,
   c.claridade_metas,
-  c.analyzed_at as construcional_analyzed_at
+  c.construcional_analyzed_at,
 
-from latest_brums b
-left join latest_diet d on d.athlete_id = b.athlete_id
-left join latest_constr c on c.athlete_id = b.athlete_id;
+  -- CAMPOS para X1/X2/X3/X4...
+  a.adversidade as coping_with_adversity,
+  a.pico_pressao as peaking_under_pressure,
+
+  -- estados derivados para correlação
+  case when g.gses_media_z <= -1 then 'low'
+       when g.gses_media_z >= 1 then 'high'
+       else 'medium' end as gses_total,
+
+  case when r.restq_media_z <= -1 then 'low'
+       when r.restq_media_z >= 1 then 'high'
+       else 'medium' end as restq_state,
+
+  (p.clima_ego_z >= 1) as ego_climate_high
+
+from brums_feats b
+left join diet_feats d on d.athlete_id = b.athlete_id
+left join constr_last c on c.athlete_id = b.athlete_id
+left join acsi_last a on a.athlete_id = b.athlete_id
+left join gses_last g on g.athlete_id = b.athlete_id
+left join restq_last r on r.athlete_id = b.athlete_id
+left join pmcsq_last p on p.athlete_id = b.athlete_id;
+
 
 -- ===========================================================
 -- 3) RPC: UPSERT DO CONSTRUCIONAL
