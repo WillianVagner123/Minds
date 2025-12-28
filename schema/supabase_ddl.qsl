@@ -431,4 +431,24 @@ alter table pmcsq_analysis       add column if not exists source text;
 alter table restq_analysis       add column if not exists source text;
 alter table construcional_raw    add column if not exists source text;
 alter table pingo_scoring_output add column if not exists source text;
+create table if not exists restq_trainer_analysis (
+  id bigserial primary key,
+  trainer_id text not null,
+  trainer_name text,
+  athlete_id text,
+  data date not null,
+
+  -- métricas
+  mean numeric,
+
+  -- metadados padrão MINDS
+  kind text,
+  payload jsonb,
+  source text,
+  master_sheet_id text,
+
+  inserted_at timestamptz default now(),
+
+  unique (trainer_id, data)
+);
 
