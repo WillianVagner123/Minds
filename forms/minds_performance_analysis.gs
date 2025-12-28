@@ -32,7 +32,7 @@
 // Properties (chave MASTER_SHEET_ID). A planilha deve conter as abas
 // RESP_DAILY, RESP_WEEKLY, etc., geradas pelo script de criação de
 // formulários prefixados.
-var MASTER_SHEET_ID = "";
+var MASTER_SHEET_ID = "17QcZhPSwT-7iEbx5MffEacmlPbpwUOImg7xxkwmhQRo";
 
 // Mapeamento de tipos de questionário (kind) para o nome da aba. Esses
 // valores devem coincidir com os nomes das abas de respostas.
