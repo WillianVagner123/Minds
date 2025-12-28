@@ -5,6 +5,10 @@
  * brums_analysis, diet_daily, weekly_analysis, acsi_analysis, gses_analysis,
  * pmcsq_analysis, restq_analysis, cbas_analysis, athlete_registration, construcional_raw
  *
+ * ✅ NOVO (2025-12): metadados + identificação:
+ * - athlete_name, team_name armazenados em athlete_registration (último cadastro vale como “fonte”)
+ * - kind + payload + source + master_sheet_id em todas as tabelas de análise (para rastreio)
+ *
  * ✅ Script Properties obrigatórias:
  * - SUPABASE_URL
  * - SUPABASE_SERVICE_KEY
@@ -179,6 +183,19 @@ function supaUpsertByAthleteDate_(cfg, table, athleteId, dateField, dateStr, rec
 }
 
 /* =========================
+   META (kind + payload)
+========================= */
+
+function addMeta_(kind, rowObj) {
+  return {
+    kind: kind,
+    payload: rowObj,
+    source: "master_sheet",
+    master_sheet_id: (MASTER_SHEET_ID || null)
+  };
+}
+
+/* =========================
    API HTTP (doGet / doPost)
 ========================= */
 
@@ -329,14 +346,45 @@ function writeKindToSupabase_(cfg, kind, athlete, rowObj) {
   if (kind === "registration")  return writeRegistration_(cfg, athlete, rowObj);
   if (kind === "construcional") return writeConstrucional_(cfg, athlete, rowObj);
 
-  // restq_trainer: sem tabela destino no DDL que você colou
-  if (kind === "restq_trainer") {
-    var m = restqTrainerMetrics_(rowObj);
-    Logger.log("restq_trainer métricas calculadas (sem tabela destino): " + JSON.stringify(m));
-    return { note: "restq_trainer sem tabela destino (não gravou)" };
-  }
+  // ✅ agora GRAVA no Supabase
+  if (kind === "restq_trainer") return writeRestqTrainer_(cfg, athlete, rowObj);
 
   throw new Error("Unhandled kind: " + kind);
+}
+
+function writeRestqTrainer_(cfg, athlete, rowObj) {
+  // athlete aqui é o "ATHLETE_ID" vindo do formulário, mas no restq_trainer
+  // ele pode ser opcional. Vamos guardar em athlete_id (nullable).
+  var ts = getRowTimestamp_(rowObj) || new Date();
+  var dataStr = dateOnly_(ts);
+
+  var m = restqTrainerMetrics_(rowObj);
+
+  // meta padrão (tem que existir no seu script)
+  var meta = addMeta_("restq_trainer", rowObj);
+
+  var trainerId = (m.trainer_id || pickByPrefix_(rowObj, ["TR_ID", "TRAINER_ID"]) || "").toString().trim();
+  var trainerName = (m.trainer_name || pickByPrefix_(rowObj, ["TR_NAME", "TRAINER_NAME"]) || "").toString().trim();
+
+  if (!trainerId) throw new Error("restq_trainer: trainer_id vazio (TR_ID).");
+
+  var rec = {
+    trainer_id: trainerId,
+    trainer_name: trainerName || null,
+    athlete_id: (athlete || "").toString().trim() || null,
+    data: dataStr,
+
+    mean: isFinite(m.mean) ? m.mean : null,
+
+    kind: meta.kind,
+    payload: meta.payload,
+    source: meta.source,
+    master_sheet_id: meta.master_sheet_id
+  };
+
+  // ✅ use UPSERT (recomendado)
+  supaUpsert_(cfg, "restq_trainer_analysis", rec, ["trainer_id", "data"]);
+  return { restq_trainer_analysis: "upsert", data: dataStr, trainer_id: trainerId };
 }
 
 /* ----- DAILY -> brums_analysis + diet_daily ----- */
@@ -346,6 +394,8 @@ function writeDaily_(cfg, athlete, rowObj) {
   var ts = getRowTimestamp_(rowObj);
   if (!ts) throw new Error("writeDaily_: timestamp inválido/ausente");
   var dataStr = dateOnly_(ts);
+
+  var meta = addMeta_("daily", rowObj);
 
   // BRUMS: DTH e DTH-Vigor
   var dth = null;
@@ -357,12 +407,18 @@ function writeDaily_(cfg, athlete, rowObj) {
 
   // opcionais do form
   var weight = nn_(pickByPrefix_(rowObj, ["DAILY_WEIGHT", "PESO", "WEIGHT"]));
-  var prePost = String(pickByPrefix_(rowObj, ["DAILY_PREPOST", "PRE_POST", "MOMENTO"]) || "") || null;
+  var prePost = String(pickByPrefix_(rowObj, ["DAILY_MOMENT", "DAILY_PREPOST", "PRE_POST", "MOMENTO"]) || "") || null;
   var modality = String(pickByPrefix_(rowObj, ["DAILY_MODALITY", "MODALIDADE", "MODALITY"]) || "") || null;
 
   var brumsRec = {
     athlete_id: athlete,
     data: dataStr,
+
+    kind: meta.kind,
+    payload: meta.payload,
+    source: meta.source,
+    master_sheet_id: meta.master_sheet_id,
+
     dth: dth,
     vigor: vigor,
     dth_minus: dth_minus,
@@ -389,6 +445,12 @@ function writeDaily_(cfg, athlete, rowObj) {
   var dietRec = {
     athlete_id: athlete,
     data: dataStr,
+
+    kind: meta.kind,
+    payload: meta.payload,
+    source: meta.source,
+    master_sheet_id: meta.master_sheet_id,
+
     adherence_score: adhScore,
     missed_meals: m.nutrition.missed_raw || null,
     energy_availability_risk: energyRisk,
@@ -410,6 +472,8 @@ function writeWeekly_(cfg, athlete, rowObj) {
   if (!start) throw new Error("writeWeekly_: start_date/timestamp inválido");
   var startStr = dateOnly_(start);
 
+  var meta = addMeta_("weekly", rowObj);
+
   var perf = m.performance_1_5;
   var adh = m.adherence_1_5;
   var adhScore = (adh !== null && isFinite(adh)) ? ((adh <= 5) ? (adh * 20) : adh) : null;
@@ -417,6 +481,12 @@ function writeWeekly_(cfg, athlete, rowObj) {
   var rec = {
     athlete_id: athlete,
     start_date: startStr,
+
+    kind: meta.kind,
+    payload: meta.payload,
+    source: meta.source,
+    master_sheet_id: meta.master_sheet_id,
+
     desempenho: isFinite(perf) ? perf : null,
     adesao_nutricional: isFinite(adhScore) ? adhScore : null,
     dieta_comentarios: m.nutrition_comments || null,
@@ -437,6 +507,8 @@ function writeQuarterly_(cfg, athlete, rowObj) {
   if (!ts) throw new Error("writeQuarterly_: timestamp inválido/ausente");
   var dataStr = dateOnly_(ts);
 
+  var meta = addMeta_("quarterly", rowObj);
+
   // ACSI
   var acsiTotal = (m.acsi_total !== null && isFinite(m.acsi_total)) ? m.acsi_total : null;
   var acsiMedia = (acsiTotal !== null) ? (acsiTotal / 28) : null;
@@ -444,6 +516,12 @@ function writeQuarterly_(cfg, athlete, rowObj) {
   var acsiRec = {
     athlete_id: athlete,
     data: dataStr,
+
+    kind: meta.kind,
+    payload: meta.payload,
+    source: meta.source,
+    master_sheet_id: meta.master_sheet_id,
+
     media: acsiMedia,
     metas_preparacao: m.acsi.goal_setting.mean,
     relacao_treinador: m.acsi.coachability.mean,
@@ -454,18 +532,39 @@ function writeQuarterly_(cfg, athlete, rowObj) {
     ausencia_preocupacao: m.acsi.freedom_worry.mean
   };
 
+  function classifyGses_(mean) {
+    if (mean === null || mean === undefined || !isFinite(mean)) return null;
+    if (mean < 2.5) return "low";
+    if (mean < 3.5) return "medium";
+    return "high";
+  }
+
   // GSES
+  var gsesMean = (m.gses && m.gses.mean !== null) ? m.gses.mean : null;
   var gsesRec = {
     athlete_id: athlete,
     data: dataStr,
-    media: (m.gses && m.gses.mean !== null) ? m.gses.mean : null,
-    autorregulacao: null
+
+    kind: meta.kind,
+    payload: meta.payload,
+    source: meta.source,
+    master_sheet_id: meta.master_sheet_id,
+
+    media: gsesMean,
+    autorregulacao: null,
+    classification: classifyGses_(gsesMean)
   };
 
   // PMCSQ
   var pmcsqRec = {
     athlete_id: athlete,
     data: dataStr,
+
+    kind: meta.kind,
+    payload: meta.payload,
+    source: meta.source,
+    master_sheet_id: meta.master_sheet_id,
+
     clima_tarefa: (m.pmcsq && m.pmcsq.mastery) ? m.pmcsq.mastery.mean : null,
     clima_ego: (m.pmcsq && m.pmcsq.performance) ? m.pmcsq.performance.mean : null,
     coletivo: null,
@@ -478,6 +577,12 @@ function writeQuarterly_(cfg, athlete, rowObj) {
   var restqRec = {
     athlete_id: athlete,
     data: dataStr,
+
+    kind: meta.kind,
+    payload: meta.payload,
+    source: meta.source,
+    master_sheet_id: meta.master_sheet_id,
+
     media: m.restq_mean,
     sono_bemestar: null,
     problemas_treino: null
@@ -499,9 +604,17 @@ function writeSemiannual_(cfg, athlete, rowObj) {
   if (!ts) throw new Error("writeSemiannual_: timestamp inválido/ausente");
   var dataStr = dateOnly_(ts);
 
+  var meta = addMeta_("semiannual", rowObj);
+
   var rec = {
     athlete_id: athlete,
     data: dataStr,
+
+    kind: meta.kind,
+    payload: meta.payload,
+    source: meta.source,
+    master_sheet_id: meta.master_sheet_id,
+
     tecnica: m.technique_mean,
     planejamento: m.planning_mean,
     motivacional: m.motivational_mean,
@@ -524,13 +637,26 @@ function writeRegistration_(cfg, athlete, rowObj) {
   if (!ts) throw new Error("writeRegistration_: timestamp inválido/ausente");
   var dataStr = dateOnly_(ts);
 
-  var iw = nn_(pickByPrefix_(rowObj, ["REG_IDEAL_WEIGHT", "IDEAL_WEIGHT", "PESO_IDEAL"]));
+  var meta = addMeta_("registration", rowObj);
+  var rm = registrationMetrics_(rowObj);
+
+  var iw = nn_(pickByPrefix_(rowObj, ["REG_IDEAL_WEIGHT", "IDEAL_WEIGHT", "PESO_IDEAL", "Peso ideal para a modalidade (kg)"]));
   if (!isFinite(iw)) iw = null;
 
   var rec = {
     athlete_id: athlete,
     data: dataStr,
-    payload: rowObj,
+
+    kind: meta.kind,
+    payload: meta.payload,
+    source: meta.source,
+    master_sheet_id: meta.master_sheet_id,
+
+    athlete_name: rm.athlete_name || null,
+    team_name: rm.team_name || null,
+    athlete_phone: rm.athlete_phone || null,
+    coach_phone: rm.coach_phone || null,
+
     ideal_weight_kg: iw
   };
 
@@ -551,9 +677,17 @@ function writeConstrucional_(cfg, athlete, rowObj) {
 
   if (!b1 && texto) b1 = texto;
 
+  var meta = addMeta_("construcional", rowObj);
+
   var rec = {
     athlete_id: athlete,
     submitted_at: iso_(new Date()),
+
+    kind: meta.kind,
+    payload: meta.payload,
+    source: meta.source,
+    master_sheet_id: meta.master_sheet_id,
+
     bloco_1: b1,
     bloco_2: b2,
     bloco_3: b3,
@@ -690,6 +824,7 @@ function quarterlyMetrics_(row) {
   for (var j = 1; j <= 28; j++) {
     var val = n_(pickByPrefix_(row, "ACSI_Q" + String(j).padStart(2, '0')));
     if (isFinite(val)) {
+      // Itens reversos: 7,12,19,23 (escala 0..3) => invert = 3 - val
       if (j === 7 || j === 12 || j === 19 || j === 23) val = 3 - val;
       acsiVals[j] = val;
     } else {
@@ -744,7 +879,7 @@ function quarterlyMetrics_(row) {
   // RESTQ – 50 itens
   var restqVals = [];
   for (var r = 1; r <= 50; r++) {
-    var vr = n_(pickByPrefix_(row, 'RESTQA_Q' + String(r).padStart(2, '0')));
+    var vr = n_(pickByPrefix_(row, "RESTQA_Q" + String(r).padStart(2, '0')));
     if (isFinite(vr)) restqVals.push(vr);
   }
   var restqMean = restqVals.length ? restqVals.reduce(function(a,b){ return a + b; }, 0) / restqVals.length : null;
@@ -807,10 +942,20 @@ function restqTrainerMetrics_(row) {
 
 /* ----- REGISTRATION METRICS ----- */
 function registrationMetrics_(row) {
+  // Athlete ID (CPF) pode estar no REG_DOC; nome no REG_NAME; time pode vir de campo livre “Clube atual…”
+  var athleteName = String(pickByPrefix_(row, ["REG_ATHLETE_NAME", "REG_NAME", "ATHLETE_NAME", "NOME_ATLETA", "Nome completo"]) || "").trim();
+  var teamName = String(pickByPrefix_(row, [
+    "REG_TEAM_NAME", "TEAM_NAME", "NOME_TIME", "TIME",
+    "Clube atual / equipe / centro de treinamento",
+    "Clube atual", "Equipe", "Time"
+  ]) || "").trim();
+
   return {
     timestamp: iso_(getRowTimestamp_(row) || new Date()),
-    athlete_phone: normPhone_(pickByPrefix_(row, "REG_ATHLETE_PHONE")),
-    coach_phone: normPhone_(pickByPrefix_(row, "REG_COACH_PHONE"))
+    athlete_name: athleteName || null,
+    team_name: teamName || null,
+    athlete_phone: normPhone_(pickByPrefix_(row, ["REG_ATHLETE_PHONE", "ATHLETE_PHONE"])),
+    coach_phone: normPhone_(pickByPrefix_(row, ["REG_COACH_PHONE", "COACH_PHONE"]))
   };
 }
 
@@ -822,6 +967,7 @@ function openMaster_() {
   var sid = (MASTER_SHEET_ID || "").trim();
   if (!sid) sid = String(PropertiesService.getScriptProperties().getProperty("MASTER_SHEET_ID") || "").trim();
   if (!sid) throw new Error("Defina MASTER_SHEET_ID ou armazene MASTER_SHEET_ID em Script Properties.");
+  MASTER_SHEET_ID = sid; // garante que meta.master_sheet_id vá preenchido
   return SpreadsheetApp.openById(sid);
 }
 
@@ -850,13 +996,26 @@ function table_(sheet) {
   return { headers: headers, rows: rows };
 }
 
+/** extrai athleteId do row conforme kind (registration aceita REG_ID/REG_DOC) */
+function athleteIdFromRow_(kind, rowObj) {
+  if (kind === "registration") {
+    // prioridade: CPF (REG_DOC) -> REG_ID -> ATHLETE_ID
+    var cpf = String(pickByPrefix_(rowObj, ["REG_DOC", "CPF", "Documento (CPF)"]) || "").replace(/\D/g, "");
+    if (cpf) return cpf;
+    var rid = String(pickByPrefix_(rowObj, ["REG_ID", "ID interno", "ID do atleta"]) || "").trim();
+    if (rid) return rid;
+  }
+  var aid = String(pickByPrefix_(rowObj, [COL.athleteId, "ATHLETE_ID", "ID do atleta"]) || "").trim();
+  return aid || "";
+}
+
 function latestRow_(kind, athlete) {
   var sh = sheet_(kind);
   var tbl = table_(sh);
 
   var rows = tbl.rows
     .filter(function(r){
-      return String(pickByPrefix_(r, COL.athleteId) || "").trim() === athlete;
+      return athleteIdFromRow_(kind, r) === athlete;
     })
     .sort(function(a,b){
       var ta = getRowTimestamp_(a);
@@ -879,7 +1038,7 @@ function rowsSince_(kind, athlete, days) {
 
   return tbl.rows
     .filter(function(r){
-      var aid = String(pickByPrefix_(r, COL.athleteId) || "").trim();
+      var aid = athleteIdFromRow_(kind, r);
       var ts  = getRowTimestamp_(r);
       return aid === athlete && ts && ts >= since;
     })
@@ -950,12 +1109,6 @@ function onFormSubmitMaster_(e) {
     var rowObj = {};
     for (var i = 0; i < headers.length; i++) rowObj[String(headers[i] || "").trim()] = values[i];
 
-    var athlete = String(pickByPrefix_(rowObj, COL.athleteId) || "").trim();
-    if (!athlete) {
-      Logger.log("onFormSubmitMaster_: ATHLETE_ID vazio");
-      return;
-    }
-
     // timestamp robusto (evita 1969-12-31)
     var ts = getRowTimestamp_(rowObj);
     if (!ts) {
@@ -964,29 +1117,44 @@ function onFormSubmitMaster_(e) {
     }
 
     if (sheetName === TAB.daily) {
+      var athlete = athleteIdFromRow_("daily", rowObj);
+      if (!athlete) { Logger.log("onFormSubmitMaster_: ATHLETE_ID vazio (daily)"); return; }
       writeDaily_(cfg, athlete, rowObj);
       sendRunScoringToN8n(athlete, dateOnly_(ts));
 
     } else if (sheetName === TAB.weekly) {
-      writeWeekly_(cfg, athlete, rowObj);
-      sendRunScoringToN8n(athlete, dateOnly_(ts));
+      var athlete2 = athleteIdFromRow_("weekly", rowObj);
+      if (!athlete2) { Logger.log("onFormSubmitMaster_: ATHLETE_ID vazio (weekly)"); return; }
+      writeWeekly_(cfg, athlete2, rowObj);
+      sendRunScoringToN8n(athlete2, dateOnly_(ts));
 
     } else if (sheetName === TAB.quarterly) {
-      writeQuarterly_(cfg, athlete, rowObj);
-      sendRunScoringToN8n(athlete, dateOnly_(ts));
+      var athlete3 = athleteIdFromRow_("quarterly", rowObj);
+      if (!athlete3) { Logger.log("onFormSubmitMaster_: ATHLETE_ID vazio (quarterly)"); return; }
+      writeQuarterly_(cfg, athlete3, rowObj);
+      sendRunScoringToN8n(athlete3, dateOnly_(ts));
 
     } else if (sheetName === TAB.semiannual) {
-      writeSemiannual_(cfg, athlete, rowObj);
-      sendRunScoringToN8n(athlete, dateOnly_(ts));
+      var athlete4 = athleteIdFromRow_("semiannual", rowObj);
+      if (!athlete4) { Logger.log("onFormSubmitMaster_: ATHLETE_ID vazio (semiannual)"); return; }
+      writeSemiannual_(cfg, athlete4, rowObj);
+      sendRunScoringToN8n(athlete4, dateOnly_(ts));
 
     } else if (sheetName === TAB.registration) {
-      writeRegistration_(cfg, athlete, rowObj);
+      // cadastro pode usar REG_DOC (CPF) como athlete_id
+      var athlete5 = athleteIdFromRow_("registration", rowObj);
+      if (!athlete5) { Logger.log("onFormSubmitMaster_: REG_DOC/REG_ID vazio (registration)"); return; }
+      writeRegistration_(cfg, athlete5, rowObj);
 
     } else if (sheetName === TAB.construcional) {
-      writeConstrucional_(cfg, athlete, rowObj);
+      var athlete6 = athleteIdFromRow_("construcional", rowObj);
+      if (!athlete6) { Logger.log("onFormSubmitMaster_: ATHLETE_ID vazio (construcional)"); return; }
+      writeConstrucional_(cfg, athlete6, rowObj);
 
     } else if (sheetName === TAB.restq_trainer) {
-      writeKindToSupabase_(cfg, "restq_trainer", athlete, rowObj);
+      // não grava no supabase (por enquanto)
+      var athlete7 = athleteIdFromRow_("restq_trainer", rowObj);
+      writeKindToSupabase_(cfg, "restq_trainer", athlete7 || "trainer", rowObj);
     }
 
   } catch (err) {
