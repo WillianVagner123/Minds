@@ -1,41 +1,23 @@
 /**
- * MINDS Performance – API de Análise (versão completa com triggers e integração n8n)
+ * MINDS Performance – API de Análise (Supabase tabelas específicas + triggers + n8n)
  *
- * Este Apps Script expõe uma API HTTP para ler respostas dos formulários
- * prefixados (diário, semanal, trimestral, semestral, RESTQ treinador e
- * cadastro) armazenados em uma planilha “mãe”, calcular métricas
- * específicas de cada questionário e, opcionalmente, inserir estas
- * métricas em tabelas JSON no Supabase. Também permite atualizar
- * telefones de atletas e treinadores a partir do formulário de cadastro
- * e dispara webhooks para workflows no n8n (Construcional e RunScoring).
+ * ✅ Grava nas tabelas existentes:
+ * brums_analysis, diet_daily, weekly_analysis, acsi_analysis, gses_analysis,
+ * pmcsq_analysis, restq_analysis, cbas_analysis, athlete_registration, construcional_raw
  *
- * Para usar:
- * 1) Copie este arquivo para um projeto Apps Script.
- * 2) Defina o ID da planilha mãe em MASTER_SHEET_ID (ou armazene em
- *    Script Properties com a chave MASTER_SHEET_ID).
- * 3) Defina SUPABASE_URL e SUPABASE_KEY em Script Properties. O nome
- *    das tabelas pode ser customizado via SUPABASE_TABLE_METRICS e
- *    SUPABASE_TABLE_ROSTER.
- * 4) Implante como Aplicativo da Web para expor as rotas HTTP se
- *    necessário (health, analyze_latest, push_latest, push_range,
- *    registration_upsert).
- * 5) Rode installOnFormSubmitTrigger() uma vez para instalar o gatilho
- *    de submissão do formulário. Isso captura respostas do Forms e
- *    processa/insere dados automaticamente no Supabase.
+ * ✅ Script Properties obrigatórias:
+ * - SUPABASE_URL
+ * - SUPABASE_SERVICE_KEY
+ *
+ * (Não usa mais SUPABASE_TABLE_METRICS / SUPABASE_TABLE_ROSTER)
  */
 
 /* =========================
    CONFIGURAÇÃO BÁSICA
 ========================= */
 
-// ID da planilha mãe. Pode ser definido diretamente aqui ou via Script
-// Properties (chave MASTER_SHEET_ID). A planilha deve conter as abas
-// RESP_DAILY, RESP_WEEKLY, etc., geradas pelo script de criação de
-// formulários prefixados.
 var MASTER_SHEET_ID = "17QcZhPSwT-7iEbx5MffEacmlPbpwUOImg7xxkwmhQRo";
 
-// Mapeamento de tipos de questionário (kind) para o nome da aba. Esses
-// valores devem coincidir com os nomes das abas de respostas.
 var TAB = {
   daily: "RESP_DAILY",
   weekly: "RESP_WEEKLY",
@@ -43,119 +25,151 @@ var TAB = {
   semiannual: "RESP_SEMIANNUAL",
   restq_trainer: "RESP_RESTQ_TRAINER",
   registration: "RESP_REGISTRATION",
-  // Adicione mais se tiver outros formulários prefixados (ex.: construcional).
   construcional: "RESP_CONSTRUCIONAL"
 };
 
-// Cabeçalhos comuns. ATHLETE_ID deve estar em todos os formulários como
-// “ATHLETE_ID | ...” para possibilitar o roteamento por atleta.
 var COL = {
   timestamp: "Carimbo de data/hora",
   athleteId: "ATHLETE_ID"
 };
 
 /* =========================
-   SUPABASE CONFIG / HELPERS
+   N8N
 ========================= */
 
-/**
- * Lê as configurações do Supabase em Script Properties. Espera as
- * chaves SUPABASE_URL e SUPABASE_KEY. Também permite customizar os
- * nomes das tabelas via SUPABASE_TABLE_METRICS e SUPABASE_TABLE_ROSTER.
- */
-function supaCfg_() {
-  var props = PropertiesService.getScriptProperties();
-  return {
-    url: String(props.getProperty("SUPABASE_URL") || "").trim(),
-    key: String(props.getProperty("SUPABASE_KEY") || "").trim(),
-    tableMetrics: String(props.getProperty("SUPABASE_TABLE_METRICS") || "athlete_questionnaire_metrics").trim(),
-    tableRoster: String(props.getProperty("SUPABASE_TABLE_ROSTER") || "athlete_roster").trim()
-  };
-}
-
-/**
- * Garante que as configurações do Supabase estejam preenchidas. Se
- * SUPABASE_URL ou SUPABASE_KEY estiverem vazios, lança erro.
- */
-function assertSupa_() {
-  var cfg = supaCfg_();
-  if (!cfg.url || !cfg.key) {
-    throw new Error("Defina SUPABASE_URL e SUPABASE_KEY em Script Properties para usar as funções Supabase.");
-  }
-  return cfg;
-}
-
-/**
- * Realiza um UPSERT de um único registro de métricas no Supabase.
- * Usa on_conflict = athlete_id,kind,observed_at para evitar duplicar.
- */
-function supaUpsertMetrics_(cfg, rec) {
-  var url = cfg.url.replace(/\/$/, "") + "/rest/v1/" + encodeURIComponent(cfg.tableMetrics) +
-    "?on_conflict=" + encodeURIComponent("athlete_id,kind,observed_at");
-  var res = UrlFetchApp.fetch(url, {
-    method: "post",
-    contentType: "application/json",
-    payload: JSON.stringify([rec]),
-    muteHttpExceptions: true,
-    headers: {
-      apikey: cfg.key,
-      Authorization: "Bearer " + cfg.key,
-      Prefer: "resolution=merge-duplicates,return=minimal"
-    }
-  });
-  var code = res.getResponseCode();
-  if (code < 200 || code >= 300) {
-    throw new Error("Supabase upsert metrics failed (" + code + "): " + res.getContentText());
-  }
-}
-
-/**
- * Realiza um UPSERT para a tabela athlete_roster, usando on_conflict
- * = athlete_id. Atualiza telefones do atleta e treinador.
- */
-function supaUpsertRoster_(cfg, rec) {
-  var url = cfg.url.replace(/\/$/, "") + "/rest/v1/" + encodeURIComponent(cfg.tableRoster) +
-    "?on_conflict=" + encodeURIComponent("athlete_id");
-  var res = UrlFetchApp.fetch(url, {
-    method: "post",
-    contentType: "application/json",
-    payload: JSON.stringify([rec]),
-    muteHttpExceptions: true,
-    headers: {
-      apikey: cfg.key,
-      Authorization: "Bearer " + cfg.key,
-      Prefer: "resolution=merge-duplicates,return=minimal"
-    }
-  });
-  var code = res.getResponseCode();
-  if (code < 200 || code >= 300) {
-    throw new Error("Supabase upsert roster failed (" + code + "): " + res.getContentText());
-  }
-}
-
-/* =========================
-   INTEGRAÇÃO n8n
-========================= */
-
-// URLs de webhooks do n8n. Ajuste para o seu ambiente.
 var N8N_CONSTRUCIONAL_WEBHOOK_URL = "https://autowebhook.opingo.com.br/webhook/Construcional";
 var N8N_RUNSCORING_WEBHOOK_URL   = "https://autowebhook.opingo.com.br/webhook/RunScoring";
 
-/** Envia dados brutos do questionário construcional para o n8n. */
 function sendConstrucionalToN8n(construcionalRawId, athleteId, texto) {
   var payload = { construcional_raw_id: construcionalRawId, athlete_id: athleteId, texto: texto };
   var options = { method: "post", contentType: "application/json", payload: JSON.stringify(payload), muteHttpExceptions: true };
   var response = UrlFetchApp.fetch(N8N_CONSTRUCIONAL_WEBHOOK_URL, options);
-  Logger.log("Construcional webhook status: " + response.getResponseCode());
+  Logger.log("Construcional webhook status: " + response.getResponseCode() + " body=" + response.getContentText());
 }
 
-/** Dispara o webhook de scoring. O n8n buscará dados no Supabase e calculará o score. */
 function sendRunScoringToN8n(athleteId, referenceDate) {
   var payload = { athlete_id: athleteId };
   if (referenceDate) payload.reference_date = referenceDate;
   var options = { method: "post", contentType: "application/json", payload: JSON.stringify(payload), muteHttpExceptions: true };
   var response = UrlFetchApp.fetch(N8N_RUNSCORING_WEBHOOK_URL, options);
-  Logger.log("RunScoring webhook status: " + response.getResponseCode());
+  Logger.log("RunScoring webhook status: " + response.getResponseCode() + " body=" + response.getContentText());
+}
+
+/* =========================
+   SUPABASE CONFIG / HELPERS
+========================= */
+
+function supaCfg_() {
+  var props = PropertiesService.getScriptProperties();
+  return {
+    url: String(props.getProperty("SUPABASE_URL") || "").trim(),
+    key: String(props.getProperty("SUPABASE_SERVICE_KEY") || "").trim()
+  };
+}
+
+function assertSupa_() {
+  var cfg = supaCfg_();
+  if (!cfg.url || !cfg.key) {
+    throw new Error("Defina SUPABASE_URL e SUPABASE_SERVICE_KEY em Script Properties.");
+  }
+  return cfg;
+}
+
+function supaHeaders_(cfg) {
+  return {
+    apikey: cfg.key,
+    Authorization: "Bearer " + cfg.key,
+    Prefer: "return=representation"
+  };
+}
+
+function supaUrl_(cfg, pathAndQuery) {
+  return cfg.url.replace(/\/$/, "") + pathAndQuery;
+}
+
+/**
+ * GET genérico (retorna array)
+ */
+function supaGet_(cfg, table, queryString) {
+  var url = supaUrl_(cfg, "/rest/v1/" + encodeURIComponent(table) + (queryString || ""));
+  var res = UrlFetchApp.fetch(url, {
+    method: "get",
+    muteHttpExceptions: true,
+    headers: supaHeaders_(cfg)
+  });
+
+  var code = res.getResponseCode();
+  var body = res.getContentText();
+  if (code < 200 || code >= 300) {
+    throw new Error("Supabase GET " + table + " failed (" + code + "): " + body);
+  }
+  try { return JSON.parse(body || "[]"); } catch(e) { return []; }
+}
+
+/**
+ * INSERT (retorna rows inseridas)
+ */
+function supaInsert_(cfg, table, rec) {
+  var url = supaUrl_(cfg, "/rest/v1/" + encodeURIComponent(table));
+  var res = UrlFetchApp.fetch(url, {
+    method: "post",
+    contentType: "application/json",
+    payload: JSON.stringify([rec]),
+    muteHttpExceptions: true,
+    headers: supaHeaders_(cfg)
+  });
+
+  var code = res.getResponseCode();
+  var body = res.getContentText();
+  Logger.log("SUPABASE insert " + table + " HTTP " + code + " -> " + body);
+
+  if (code < 200 || code >= 300) {
+    throw new Error("Supabase INSERT " + table + " failed (" + code + "): " + body);
+  }
+  try { return JSON.parse(body || "[]"); } catch(e) { return []; }
+}
+
+/**
+ * PATCH por filtro (idempotência sem precisar unique constraint)
+ * ⚠️ Se tiver duplicado no banco, pode atualizar mais de 1 linha.
+ */
+function supaPatchByFilter_(cfg, table, filterQuery, patchObj) {
+  var url = supaUrl_(cfg, "/rest/v1/" + encodeURIComponent(table) + (filterQuery || ""));
+  var res = UrlFetchApp.fetch(url, {
+    method: "patch",
+    contentType: "application/json",
+    payload: JSON.stringify(patchObj),
+    muteHttpExceptions: true,
+    headers: supaHeaders_(cfg)
+  });
+
+  var code = res.getResponseCode();
+  var body = res.getContentText();
+  Logger.log("SUPABASE patch " + table + " HTTP " + code + " -> " + body);
+
+  if (code < 200 || code >= 300) {
+    throw new Error("Supabase PATCH " + table + " failed (" + code + "): " + body);
+  }
+  try { return JSON.parse(body || "[]"); } catch(e) { return []; }
+}
+
+/**
+ * UPSERT “manual”: se existe (athlete_id + dateField), faz PATCH, senão INSERT
+ */
+function supaUpsertByAthleteDate_(cfg, table, athleteId, dateField, dateStr, rec) {
+  var filter = "?select=id&athlete_id=eq." + encodeURIComponent(athleteId) +
+               "&" + encodeURIComponent(dateField) + "=eq." + encodeURIComponent(dateStr) +
+               "&limit=1";
+  var found = supaGet_(cfg, table, filter);
+  if (found && found.length) {
+    var patchFilter = "?athlete_id=eq." + encodeURIComponent(athleteId) +
+                      "&" + encodeURIComponent(dateField) + "=eq." + encodeURIComponent(dateStr);
+    supaPatchByFilter_(cfg, table, patchFilter, rec);
+    return { mode: "patch" };
+  } else {
+    supaInsert_(cfg, table, rec);
+    return { mode: "insert" };
+  }
 }
 
 /* =========================
@@ -164,24 +178,20 @@ function sendRunScoringToN8n(athleteId, referenceDate) {
 
 function doGet(e) {
   try {
-    var action = String(e.parameter.action || "").trim();
+    var action = String((e && e.parameter && e.parameter.action) || "").trim();
     if (!action) return json_({ ok: false, error: "Missing action" });
+
     if (action === "health") return health_();
     if (action === "analyze_latest") return analyzeLatest_(e);
     if (action === "push_latest") return pushLatest_(e);
     if (action === "push_range") return pushRange_(e);
-    if (action === "registration_upsert") return registrationUpsert_(e);
+
     return json_({ ok: false, error: "Unknown action", action: action });
   } catch (err) {
     return json_({ ok: false, error: String(err && err.message ? err.message : err) });
   }
 }
 
-/* =========================
-   ENDPOINT HANDLERS
-========================= */
-
-/** Retorna informações sobre a planilha e se Supabase está configurado. */
 function health_() {
   var ss = openMaster_();
   var cfg = supaCfg_();
@@ -194,81 +204,344 @@ function health_() {
   });
 }
 
-/** Calcula métricas do último registro de um atleta em determinado questionário. */
+/**
+ * Só calcula (não grava)
+ * GET: ?action=analyze_latest&kind=daily&athlete=...
+ */
 function analyzeLatest_(e) {
   var kind = reqKind_(e);
   var athlete = req_(e, "athlete");
   var row = latestRow_(kind, athlete);
   if (!row) return json_({ ok: true, kind: kind, athlete: athlete, found: false });
+
   var metrics = computeMetrics_(kind, row);
-  return json_({ ok: true, kind: kind, athlete: athlete, found: true, observed_at: iso_(toDate_(row[COL.timestamp])), metrics: metrics });
+  return json_({
+    ok: true,
+    kind: kind,
+    athlete: athlete,
+    found: true,
+    observed_at: iso_(toDate_(row[COL.timestamp])),
+    metrics: metrics
+  });
 }
 
-/** Calcula métricas do último registro e upserteia no Supabase. */
+/**
+ * Grava o último registro nas tabelas específicas
+ * GET: ?action=push_latest&kind=daily&athlete=...&score=1
+ */
 function pushLatest_(e) {
   var cfg = assertSupa_();
   var kind = reqKind_(e);
   var athlete = req_(e, "athlete");
-  if (kind === "registration") {
-    return registrationUpsert_(e);
-  }
+  var score = String(e.parameter.score || "").trim() === "1";
+
   var row = latestRow_(kind, athlete);
   if (!row) return json_({ ok: true, kind: kind, athlete: athlete, found: false, pushed: false });
-  var rec = buildRecord_(kind, athlete, row);
-  supaUpsertMetrics_(cfg, rec);
-  return json_({ ok: true, kind: kind, athlete: athlete, pushed: true });
+
+  var pushedInfo = writeKindToSupabase_(cfg, kind, athlete, row);
+
+  if (score && kind !== "construcional" && kind !== "registration") {
+    var refDate = dateOnly_(toDate_(row[COL.timestamp]));
+    sendRunScoringToN8n(athlete, refDate);
+  }
+
+  return json_({ ok: true, kind: kind, athlete: athlete, found: true, pushed: true, pushedInfo: pushedInfo });
 }
 
-/** Calcula e insere métricas dos últimos N dias. */
+/**
+ * Grava um range (últimos N dias)
+ * GET: ?action=push_range&kind=daily&athlete=...&days=30&score=0
+ */
 function pushRange_(e) {
   var cfg = assertSupa_();
   var kind = reqKind_(e);
   var athlete = req_(e, "athlete");
   var days = parseInt(e.parameter.days || "30", 10);
   if (!(days > 0)) days = 30;
-  if (kind === "registration") {
-    return registrationUpsert_(e);
-  }
+
+  var score = String(e.parameter.score || "").trim() === "1";
+
   var rows = rowsSince_(kind, athlete, days);
   if (!rows.length) return json_({ ok: true, kind: kind, athlete: athlete, days: days, found: false, pushed: 0 });
+
   var pushed = 0, errors = [];
   for (var i = 0; i < rows.length; i++) {
     try {
-      var rec = buildRecord_(kind, athlete, rows[i]);
-      supaUpsertMetrics_(cfg, rec);
+      writeKindToSupabase_(cfg, kind, athlete, rows[i]);
       pushed++;
+      if (score && kind !== "construcional" && kind !== "registration") {
+        var refDate = dateOnly_(toDate_(rows[i][COL.timestamp]));
+        sendRunScoringToN8n(athlete, refDate);
+      }
     } catch (err) {
       errors.push({ index: i, error: String(err && err.message ? err.message : err) });
     }
   }
+
   return json_({ ok: true, kind: kind, athlete: athlete, days: days, attempted: rows.length, pushed: pushed, errors: errors });
 }
 
-/** Atualiza telefones no roster com base no último formulário de cadastro. */
-function registrationUpsert_(e) {
-  var cfg = assertSupa_();
-  var athlete = req_(e, "athlete");
-  var row = latestRow_("registration", athlete);
-  if (!row) return json_({ ok: true, athlete: athlete, found: false, updated: false });
-  var athletePhone = normPhone_(pickByPrefix_(row, "REG_ATHLETE_PHONE"));
-  var coachPhone = normPhone_(pickByPrefix_(row, "REG_COACH_PHONE"));
+/* =========================
+   GRAVAÇÃO POR KIND (TABELAS EXISTENTES)
+========================= */
+
+function writeKindToSupabase_(cfg, kind, athlete, rowObj) {
+  if (kind === "daily")        return writeDaily_(cfg, athlete, rowObj);
+  if (kind === "weekly")       return writeWeekly_(cfg, athlete, rowObj);
+  if (kind === "quarterly")    return writeQuarterly_(cfg, athlete, rowObj);
+  if (kind === "semiannual")   return writeSemiannual_(cfg, athlete, rowObj);
+  if (kind === "registration") return writeRegistration_(cfg, athlete, rowObj);
+  if (kind === "construcional")return writeConstrucional_(cfg, athlete, rowObj);
+
+  // restq_trainer: não existe tabela no seu DDL (pelo que você colou)
+  // então eu só calculo e log, sem gravar.
+  if (kind === "restq_trainer") {
+    var m = restqTrainerMetrics_(rowObj);
+    Logger.log("restq_trainer métricas calculadas (sem tabela destino): " + JSON.stringify(m));
+    return { note: "restq_trainer sem tabela destino (não gravou)" };
+  }
+
+  throw new Error("Unhandled kind: " + kind);
+}
+
+/* ----- DAILY -> brums_analysis + diet_daily ----- */
+function writeDaily_(cfg, athlete, rowObj) {
+  var m = dailyMetrics_(rowObj);
+  var d = toDate_(rowObj[COL.timestamp]);
+  var dataStr = dateOnly_(d);
+
+  // BRUMS
+  var dth = null;
+  if ([m.brums.tension, m.brums.depression, m.brums.anger, m.brums.fatigue, m.brums.confusion].every(function(x){ return x !== null; })) {
+    dth = m.brums.tension + m.brums.depression + m.brums.anger + m.brums.fatigue + m.brums.confusion;
+  }
+  var vigor = m.brums.vigor;
+  var dth_minus = (dth !== null && vigor !== null) ? (dth - vigor) : m.brums.tmd;
+
+  var weight = nn_(pickByPrefix_(rowObj, "DAILY_WEIGHT")); // opcional, se existir no seu form
+  var prePost = String(pickByPrefix_(rowObj, "DAILY_PREPOST") || "") || null;
+  var modality = String(pickByPrefix_(rowObj, "DAILY_MODALITY") || "") || null;
+
+  var brumsRec = {
+    athlete_id: athlete,
+    data: dataStr,
+    dth: dth,
+    vigor: vigor,
+    dth_minus: dth_minus,
+    carga: m.load.sRPE_load,
+    weight_kg: isFinite(weight) ? weight : null,
+    pre_post_moment: prePost,
+    training_modality: modality,
+    training_time: m.load.duration_min
+  };
+
+  // DIETA
+  // converte 1..5 para 0..100 (compatível com diet_daily_view que usa 80/60)
+  var adh = m.nutrition.adherence_1_5;
+  var adhScore = null;
+  if (adh !== null && isFinite(adh)) {
+    adhScore = (adh <= 5) ? (adh * 20) : adh; // se já vier em %, mantém
+  }
+
+  var lowRaw = String(m.nutrition.low_energy_raw || "").toLowerCase();
+  var energyRisk = null;
+  if (lowRaw) {
+    energyRisk = (lowRaw.indexOf("sim") >= 0 || lowRaw.indexOf("yes") >= 0 || lowRaw.indexOf("true") >= 0 || lowRaw === "1");
+  }
+
+  var dietRec = {
+    athlete_id: athlete,
+    data: dataStr,
+    adherence_score: adhScore,
+    missed_meals: m.nutrition.missed_raw || null,
+    energy_availability_risk: energyRisk,
+    gi_distress: m.nutrition.gi_0_10
+  };
+
+  var a = supaUpsertByAthleteDate_(cfg, "brums_analysis", athlete, "data", dataStr, brumsRec);
+  var b = supaUpsertByAthleteDate_(cfg, "diet_daily", athlete, "data", dataStr, dietRec);
+
+  return { brums_analysis: a.mode, diet_daily: b.mode, data: dataStr };
+}
+
+/* ----- WEEKLY -> weekly_analysis ----- */
+function writeWeekly_(cfg, athlete, rowObj) {
+  var m = weeklyMetrics_(rowObj);
+
+  // start_date vem do WEEK_START se tiver; senão usa data do carimbo
+  var start = m.week_start ? toDate_(m.week_start) : toDate_(rowObj[COL.timestamp]);
+  var startStr = dateOnly_(start);
+
+  var perf = m.performance_1_5;
+  var adh = m.adherence_1_5;
+  var adhScore = (adh !== null && isFinite(adh)) ? ((adh <= 5) ? (adh * 20) : adh) : null;
+
   var rec = {
     athlete_id: athlete,
-    athlete_phone: athletePhone || null,
-    coach_phone: coachPhone || null,
-    updated_at: iso_(new Date())
+    start_date: startStr,
+    desempenho: isFinite(perf) ? perf : null,
+    adesao_nutricional: isFinite(adhScore) ? adhScore : null,
+    dieta_comentarios: m.nutrition_comments || null,
+    cansaco_acao: m.recovery_comments || null,
+    semana_comentarios: m.comments || null,
+    eventos: m.events || null
   };
-  supaUpsertRoster_(cfg, rec);
-  return json_({ ok: true, athlete: athlete, found: true, updated: true });
+
+  var r = supaUpsertByAthleteDate_(cfg, "weekly_analysis", athlete, "start_date", startStr, rec);
+  return { weekly_analysis: r.mode, start_date: startStr };
+}
+
+/* ----- QUARTERLY -> acsi_analysis + gses_analysis + pmcsq_analysis + restq_analysis ----- */
+function writeQuarterly_(cfg, athlete, rowObj) {
+  var m = quarterlyMetrics_(rowObj);
+  var d = toDate_(rowObj[COL.timestamp]);
+  var dataStr = dateOnly_(d);
+
+  // ACSI
+  var acsiTotal = null;
+  if (m.acsi_total !== null && isFinite(m.acsi_total)) {
+    acsiTotal = m.acsi_total;
+  }
+  var acsiMedia = (acsiTotal !== null) ? (acsiTotal / 28) : null;
+
+  var acsiRec = {
+    athlete_id: athlete,
+    data: dataStr,
+    media: acsiMedia,
+    metas_preparacao: m.acsi.goal_setting.mean,
+    relacao_treinador: m.acsi.coachability.mean,
+    concentracao: m.acsi.concentration.mean,
+    confianca_motivacao: m.acsi.confidence.mean,
+    pico_pressao: m.acsi.peaking_pressure.mean,
+    adversidade: m.acsi.coping_adversity.mean,
+    ausencia_preocupacao: m.acsi.freedom_worry.mean
+  };
+
+  // GSES
+  var gsesRec = {
+    athlete_id: athlete,
+    data: dataStr,
+    media: (m.gses && m.gses.mean !== null) ? m.gses.mean : null,
+    autorregulacao: null
+  };
+
+  // PMCSQ (mapeando mastery/performance)
+  var pmcsqRec = {
+    athlete_id: athlete,
+    data: dataStr,
+    clima_tarefa: (m.pmcsq && m.pmcsq.mastery) ? m.pmcsq.mastery.mean : null,
+    clima_ego: (m.pmcsq && m.pmcsq.performance) ? m.pmcsq.performance.mean : null,
+    coletivo: null,
+    clima_treino_desafiador: null,
+    clima_ego_preferido: null,
+    punicao_erros: null
+  };
+
+  // RESTQ (só média geral aqui)
+  var restqRec = {
+    athlete_id: athlete,
+    data: dataStr,
+    media: m.restq_mean,
+    sono_bemestar: null,
+    problemas_treino: null
+  };
+
+  var a = supaUpsertByAthleteDate_(cfg, "acsi_analysis", athlete, "data", dataStr, acsiRec);
+  var g = supaUpsertByAthleteDate_(cfg, "gses_analysis", athlete, "data", dataStr, gsesRec);
+  var p = supaUpsertByAthleteDate_(cfg, "pmcsq_analysis", athlete, "data", dataStr, pmcsqRec);
+  var r = supaUpsertByAthleteDate_(cfg, "restq_analysis", athlete, "data", dataStr, restqRec);
+
+  return { data: dataStr, acsi: a.mode, gses: g.mode, pmcsq: p.mode, restq: r.mode };
+}
+
+/* ----- SEMIANNUAL -> cbas_analysis ----- */
+function writeSemiannual_(cfg, athlete, rowObj) {
+  var m = semiannualMetrics_(rowObj);
+  var d = toDate_(rowObj[COL.timestamp]);
+  var dataStr = dateOnly_(d);
+
+  var rec = {
+    athlete_id: athlete,
+    data: dataStr,
+    tecnica: m.technique_mean,
+    planejamento: m.planning_mean,
+    motivacional: m.motivational_mean,
+    relacao: m.relation_mean,
+    aversivos: m.aversives_mean,
+    tecnica_chave: null,
+    planejamento_chave: null,
+    motivacional_chave: null,
+    relacao_chave: null,
+    aversivos_chave: null
+  };
+
+  var x = supaUpsertByAthleteDate_(cfg, "cbas_analysis", athlete, "data", dataStr, rec);
+  return { cbas_analysis: x.mode, data: dataStr };
+}
+
+/* ----- REGISTRATION -> athlete_registration ----- */
+function writeRegistration_(cfg, athlete, rowObj) {
+  var d = toDate_(rowObj[COL.timestamp]);
+  var dataStr = dateOnly_(d);
+
+  // payload bruto do form (guarda tudo)
+  var payload = rowObj;
+
+  // ideal_weight (se existir no form)
+  var iw = nn_(pickByPrefix_(rowObj, "REG_IDEAL_WEIGHT"));
+  if (!isFinite(iw)) iw = null;
+
+  var rec = {
+    athlete_id: athlete,
+    data: dataStr,
+    payload: payload,
+    ideal_weight_kg: iw
+  };
+
+  // athlete_registration não tem “data unique”, então aqui fazemos INSERT sempre
+  // (é histórico). Se você quiser “só o último”, eu adapto para upsert por data.
+  supaInsert_(cfg, "athlete_registration", rec);
+
+  return { athlete_registration: "insert", data: dataStr };
+}
+
+/* ----- CONSTRUCIONAL -> construcional_raw + webhook n8n (com id) ----- */
+function writeConstrucional_(cfg, athlete, rowObj) {
+  var texto = String(rowObj["CONS_TXT"] || pickByPrefix_(rowObj, "CONS_TXT") || "").trim();
+
+  // Se você tem 4 blocos no form (recomendado)
+  var b1 = String(rowObj["CONS_BLOCO_1"] || pickByPrefix_(rowObj, "CONS_BLOCO_1") || "").trim() || null;
+  var b2 = String(rowObj["CONS_BLOCO_2"] || pickByPrefix_(rowObj, "CONS_BLOCO_2") || "").trim() || null;
+  var b3 = String(rowObj["CONS_BLOCO_3"] || pickByPrefix_(rowObj, "CONS_BLOCO_3") || "").trim() || null;
+  var b4 = String(rowObj["CONS_BLOCO_4"] || pickByPrefix_(rowObj, "CONS_BLOCO_4") || "").trim() || null;
+
+  // Se não tiver blocos, joga tudo no bloco_1
+  if (!b1 && texto) b1 = texto;
+
+  var rec = {
+    athlete_id: athlete,
+    submitted_at: iso_(new Date()),
+    bloco_1: b1,
+    bloco_2: b2,
+    bloco_3: b3,
+    bloco_4: b4,
+    status: "sent_to_n8n",
+    last_error: null
+  };
+
+  var inserted = supaInsert_(cfg, "construcional_raw", rec);
+  var id = (inserted && inserted[0] && inserted[0].id) ? inserted[0].id : null;
+
+  // dispara n8n com o id (isso é o MAIS importante)
+  sendConstrucionalToN8n(id, athlete, texto || b1 || "");
+
+  return { construcional_raw: "insert", id: id };
 }
 
 /* =========================
-   CÁLCULO DE MÉTRICAS
+   CÁLCULO DE MÉTRICAS (mantive suas funções)
 ========================= */
 
-/**
- * Seleciona a função de cálculo adequada para o tipo de questionário.
- */
 function computeMetrics_(kind, row) {
   if (kind === "daily") return dailyMetrics_(row);
   if (kind === "weekly") return weeklyMetrics_(row);
@@ -276,42 +549,29 @@ function computeMetrics_(kind, row) {
   if (kind === "semiannual") return semiannualMetrics_(row);
   if (kind === "restq_trainer") return restqTrainerMetrics_(row);
   if (kind === "registration") return registrationMetrics_(row);
+  if (kind === "construcional") return { note: "construcional é texto/raw + n8n" };
   throw new Error("Unhandled kind: " + kind);
 }
 
-/** Cria o registro a ser gravado no Supabase a partir das métricas. */
-function buildRecord_(kind, athlete, row) {
-  var observedAt = iso_(toDate_(row[COL.timestamp]));
-  return {
-    athlete_id: athlete,
-    kind: kind,
-    observed_at: observedAt,
-    source: "apps_script",
-    metrics: computeMetrics_(kind, row)
-  };
-}
-
 /* ----- DAILY METRICS ----- */
-
 function dailyMetrics_(row) {
   var ts = iso_(toDate_(row[COL.timestamp]));
-  // Carga de treino
   var rpe = n_(pickByPrefix_(row, "DAILY_RPE"));
   var dur = n_(pickByPrefix_(row, "DAILY_DUR"));
   var load = (isFinite(rpe) && isFinite(dur)) ? rpe * dur : null;
-  // Nutrição
+
   var adherence = n_(pickByPrefix_(row, "DAILY_ADH"));
   var gi = n_(pickByPrefix_(row, "DAILY_GI"));
   var missed = String(pickByPrefix_(row, "DAILY_MISSED") || "");
   var lowEnergy = String(pickByPrefix_(row, "DAILY_LOW") || "");
-  // Vigor momentâneo (4 itens)
+
   var vigorVals = [];
   for (var i = 1; i <= 4; i++) {
     var v = n_(pickByPrefix_(row, "VIGOR_Q" + String(i).padStart(2, '0')));
     if (isFinite(v)) vigorVals.push(v);
   }
   var vigorMean = vigorVals.length ? vigorVals.reduce(function(a,b){ return a+b; }, 0) / vigorVals.length : null;
-  // BRUMS 24 itens
+
   var br = [];
   for (var j = 1; j <= 24; j++) {
     var vj = n_(pickByPrefix_(row, "BRUMS_Q" + String(j).padStart(2, '0')));
@@ -331,10 +591,12 @@ function dailyMetrics_(row) {
   var vigorSum = sumRange(br, 12, 15);
   var fatigue = sumRange(br, 16, 19);
   var confusion = sumRange(br, 20, 23);
+
   var tmd = null;
   if ([tension, depression, anger, vigorSum, fatigue, confusion].every(function(x){ return x !== null; })) {
     tmd = (tension + depression + anger + fatigue + confusion) - vigorSum;
   }
+
   return {
     timestamp: ts,
     load: {
@@ -378,7 +640,7 @@ function weeklyMetrics_(row) {
 /* ----- QUARTERLY METRICS ----- */
 function quarterlyMetrics_(row) {
   var ts = iso_(toDate_(row[COL.timestamp]));
-  // GSES – 10 itens (1–5)
+
   var gsesVals = [];
   for (var i = 1; i <= 10; i++) {
     var v = n_(pickByPrefix_(row, "GSES_Q" + String(i).padStart(2, '0')));
@@ -386,14 +648,12 @@ function quarterlyMetrics_(row) {
   }
   var gsesSum = gsesVals.reduce(function(a,b){ return a + b; }, 0);
   var gsesMean = gsesVals.length ? gsesSum / gsesVals.length : null;
-  // ACSI-28 – 7 subescalas de 4 itens cada (itens 7,12,19,23 invertidos)【936767469737001†L226-L319】.
+
   var acsiVals = [];
   for (var j = 1; j <= 28; j++) {
     var val = n_(pickByPrefix_(row, "ACSI_Q" + String(j).padStart(2, '0')));
     if (isFinite(val)) {
-      if (j === 7 || j === 12 || j === 19 || j === 23) {
-        val = 3 - val;
-      }
+      if (j === 7 || j === 12 || j === 19 || j === 23) val = 3 - val;
       acsiVals[j] = val;
     } else {
       acsiVals[j] = null;
@@ -418,7 +678,7 @@ function quarterlyMetrics_(row) {
   if (acsiVals.slice(1).every(function(x){ return isFinite(x); })) {
     acsiTotal = acsiVals.slice(1).reduce(function(a,b){ return a + b; }, 0);
   }
-  // PMCSQ – 34 itens, divididos em clima de tarefa e ego
+
   var pmcVals = [];
   for (var k = 1; k <= 34; k++) {
     var vpm = n_(pickByPrefix_(row, "PMCSQ_Q" + String(k).padStart(2, '0')));
@@ -437,13 +697,14 @@ function quarterlyMetrics_(row) {
     mastery: pmcSub(1, 16),
     performance: pmcSub(17, 34)
   };
-  // RESTQ-Sport (50 itens 0–6). Média geral
+
   var restqVals = [];
   for (var r = 1; r <= 50; r++) {
     var vr = n_(pickByPrefix_(row, "RESTQA_Q" + String(r).padStart(2, '0')));
     if (isFinite(vr)) restqVals.push(vr);
   }
   var restqMean = restqVals.length ? restqVals.reduce(function(a,b){ return a + b; }, 0) / restqVals.length : null;
+
   return {
     timestamp: ts,
     gses: { sum: isFinite(gsesSum) ? gsesSum : null, mean: isFinite(gsesMean) ? gsesMean : null },
@@ -511,9 +772,7 @@ function registrationMetrics_(row) {
 
 function openMaster_() {
   var sid = (MASTER_SHEET_ID || "").trim();
-  if (!sid) {
-    sid = String(PropertiesService.getScriptProperties().getProperty("MASTER_SHEET_ID") || "").trim();
-  }
+  if (!sid) sid = String(PropertiesService.getScriptProperties().getProperty("MASTER_SHEET_ID") || "").trim();
   if (!sid) throw new Error("Defina MASTER_SHEET_ID ou armazene MASTER_SHEET_ID em Script Properties.");
   return SpreadsheetApp.openById(sid);
 }
@@ -534,9 +793,7 @@ function table_(sheet) {
   var rows = [];
   for (var i = 1; i < values.length; i++) {
     var obj = {};
-    for (var c = 0; c < headers.length; c++) {
-      obj[headers[c]] = values[i][c];
-    }
+    for (var c = 0; c < headers.length; c++) obj[headers[c]] = values[i][c];
     rows.push(obj);
   }
   return { headers: headers, rows: rows };
@@ -545,7 +802,9 @@ function table_(sheet) {
 function latestRow_(kind, athlete) {
   var sh = sheet_(kind);
   var tbl = table_(sh);
-  var rows = tbl.rows.filter(function(r){ return String(r[COL.athleteId] || "").trim() === athlete; }).sort(function(a,b){ return toDate_(b[COL.timestamp]) - toDate_(a[COL.timestamp]); });
+  var rows = tbl.rows
+    .filter(function(r){ return String(r[COL.athleteId] || "").trim() === athlete; })
+    .sort(function(a,b){ return toDate_(b[COL.timestamp]) - toDate_(a[COL.timestamp]); });
   return rows.length ? rows[0] : null;
 }
 
@@ -553,7 +812,9 @@ function rowsSince_(kind, athlete, days) {
   var sh = sheet_(kind);
   var since = new Date(); since.setDate(since.getDate() - days);
   var tbl = table_(sh);
-  return tbl.rows.filter(function(r){ return String(r[COL.athleteId] || "").trim() === athlete && toDate_(r[COL.timestamp]) >= since; }).sort(function(a,b){ return toDate_(a[COL.timestamp]) - toDate_(b[COL.timestamp]); });
+  return tbl.rows
+    .filter(function(r){ return String(r[COL.athleteId] || "").trim() === athlete && toDate_(r[COL.timestamp]) >= since; })
+    .sort(function(a,b){ return toDate_(a[COL.timestamp]) - toDate_(b[COL.timestamp]); });
 }
 
 /* =========================
@@ -600,6 +861,11 @@ function iso_(d) {
   return Utilities.formatDate(d, Session.getScriptTimeZone(), "yyyy-MM-dd'T'HH:mm:ssXXX");
 }
 
+function dateOnly_(d) {
+  if (!(d instanceof Date)) d = new Date(d);
+  return Utilities.formatDate(d, Session.getScriptTimeZone(), "yyyy-MM-dd");
+}
+
 function pickByPrefix_(row, prefix) {
   var keys = Object.keys(row);
   for (var i = 0; i < keys.length; i++) {
@@ -623,11 +889,6 @@ function normPhone_(raw) {
    TRIGGER (Form Submit)
 ========================= */
 
-/**
- * Instala o gatilho onFormSubmit para a planilha mãe. Rode apenas
- * uma vez. Após instalado, qualquer submissão de qualquer aba
- * dispara onFormSubmitMaster_.
- */
 function installOnFormSubmitTrigger() {
   var ss = openMaster_();
   ScriptApp.newTrigger("onFormSubmitMaster_")
@@ -636,84 +897,43 @@ function installOnFormSubmitTrigger() {
     .create();
 }
 
-/** Roteia cada resposta conforme o tipo de aba e dispara scoring quando necessário. */
 function onFormSubmitMaster_(e) {
   try {
+    var cfg = assertSupa_();
     var sheet = e.range.getSheet();
     var sheetName = sheet.getName();
     var rowIndex = e.range.getRow();
+
     var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0].map(String);
-    var values = sheet.getRange(rowIndex, 1, 1, sheet.getLastColumn()).getValues()[0];
+    var values  = sheet.getRange(rowIndex, 1, 1, sheet.getLastColumn()).getValues()[0];
+
     var rowObj = {};
-    for (var i = 0; i < headers.length; i++) {
-      rowObj[headers[i].trim()] = values[i];
-    }
+    for (var i = 0; i < headers.length; i++) rowObj[headers[i].trim()] = values[i];
+
     var athlete = String(rowObj[COL.athleteId] || "").trim();
     if (!athlete) return;
-    // Determine tipo pelo nome da aba
+
     if (sheetName === TAB.daily) {
-      handleKindAndMaybeScore_("daily", rowObj, true);
+      writeDaily_(cfg, athlete, rowObj);
+      sendRunScoringToN8n(athlete, dateOnly_(toDate_(rowObj[COL.timestamp])));
     } else if (sheetName === TAB.weekly) {
-      handleKindAndMaybeScore_("weekly", rowObj, true);
+      writeWeekly_(cfg, athlete, rowObj);
+      sendRunScoringToN8n(athlete, dateOnly_(toDate_(rowObj[COL.timestamp])));
     } else if (sheetName === TAB.quarterly) {
-      handleKindAndMaybeScore_("quarterly", rowObj, true);
+      writeQuarterly_(cfg, athlete, rowObj);
+      sendRunScoringToN8n(athlete, dateOnly_(toDate_(rowObj[COL.timestamp])));
     } else if (sheetName === TAB.semiannual) {
-      handleKindAndMaybeScore_("semiannual", rowObj, true);
-    } else if (sheetName === TAB.restq_trainer) {
-      handleKindAndMaybeScore_("restq_trainer", rowObj, true);
+      writeSemiannual_(cfg, athlete, rowObj);
+      sendRunScoringToN8n(athlete, dateOnly_(toDate_(rowObj[COL.timestamp])));
     } else if (sheetName === TAB.registration) {
-      handleRegistration_(rowObj);
+      writeRegistration_(cfg, athlete, rowObj);
     } else if (sheetName === TAB.construcional) {
-      handleConstrucional_(rowObj);
+      writeConstrucional_(cfg, athlete, rowObj);
+    } else if (sheetName === TAB.restq_trainer) {
+      // sem tabela destino (por enquanto)
+      writeKindToSupabase_(cfg, "restq_trainer", athlete, rowObj);
     }
   } catch (err) {
     Logger.log("onFormSubmitMaster_ ERROR: " + err);
   }
-}
-
-/* =========================
-   HANDLERS POR ABA
-========================= */
-
-function handleKindAndMaybeScore_(kind, rowObj, callScoring) {
-  var cfg = assertSupa_();
-  var athlete = String(rowObj[COL.athleteId] || "").trim();
-  if (!athlete) return;
-  // 1) calcula e upsert
-  var rec = buildRecord_(kind, athlete, rowObj);
-  supaUpsertMetrics_(cfg, rec);
-  // 2) dispara scoring se requisitado
-  if (callScoring) {
-    var refDate = Utilities.formatDate(toDate_(rowObj[COL.timestamp]), Session.getScriptTimeZone(), "yyyy-MM-dd");
-    sendRunScoringToN8n(athlete, refDate);
-  }
-}
-
-function handleRegistration_(rowObj) {
-  var cfg = assertSupa_();
-  var athlete = String(rowObj[COL.athleteId] || "").trim();
-  if (!athlete) return;
-  // upsert metrics do registration
-  var rec = buildRecord_("registration", athlete, rowObj);
-  supaUpsertMetrics_(cfg, rec);
-  // upsert roster (telefones)
-  var athletePhone = normPhone_(pickByPrefix_(rowObj, "REG_ATHLETE_PHONE"));
-  var coachPhone   = normPhone_(pickByPrefix_(rowObj, "REG_COACH_PHONE"));
-  supaUpsertRoster_(cfg, {
-    athlete_id: athlete,
-    athlete_phone: athletePhone || null,
-    coach_phone: coachPhone || null,
-    updated_at: iso_(new Date())
-  });
-}
-
-// Handler de construcional: salva raw e dispara classificações via n8n.
-function handleConstrucional_(rowObj) {
-  // Para construcional, considere criar tabela construcional_raw no Supabase
-  var athlete = String(rowObj[COL.athleteId] || "").trim();
-  if (!athlete) return;
-  var texto = String(rowObj["CONS_TXT"] || "").trim(); // ajuste o prefixo conforme sua pergunta
-  // Insira raw no Supabase, se desejar. Aqui apenas chamamos webhook:
-  sendConstrucionalToN8n(null, athlete, texto);
-  // O n8n lida com upsert de construcional_analysis e scoring posteriormente.
 }
