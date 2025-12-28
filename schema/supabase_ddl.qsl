@@ -346,29 +346,25 @@ create table if not exists analysis_vectors (
 create index if not exists analysis_vectors_embedding_idx
   on analysis_vectors using ivfflat (embedding) with (lists = 100);
 
--- =========================
--- MIGRATION HELPERS (se tabelas já existirem)
--- =========================
--- Se você já tem as tabelas criadas, rode os ALTERs abaixo em vez de recriar:
--- (1) athlete_registration
--- ALTER TABLE athlete_registration
---   ADD COLUMN IF NOT EXISTS athlete_name text,
---   ADD COLUMN IF NOT EXISTS team_name text,
---   ADD COLUMN IF NOT EXISTS athlete_phone text,
---   ADD COLUMN IF NOT EXISTS coach_phone text,
---   ADD COLUMN IF NOT EXISTS kind text,
---   ADD COLUMN IF NOT EXISTS payload jsonb,
---   ADD COLUMN IF NOT EXISTS source text,
---   ADD COLUMN IF NOT EXISTS master_sheet_id text;
---
--- (2) brums_analysis/diet_daily/weekly/acsi/gses/pmcsq/restq/cbas/construcional_raw/pingo_scoring_output:
--- ALTER TABLE <table>
---   ADD COLUMN IF NOT EXISTS kind text,
---   ADD COLUMN IF NOT EXISTS payload jsonb,
---   ADD COLUMN IF NOT EXISTS source text,
---   ADD COLUMN IF NOT EXISTS master_sheet_id text;
--- ALTER TABLE gses_analysis ADD COLUMN IF NOT EXISTS classification text;
--- =========================
+-- Adiciona master_sheet_id nas tabelas que o GS está PATCH/INSERT
+alter table brums_analysis   add column if not exists master_sheet_id text;
+alter table weekly_analysis  add column if not exists master_sheet_id text;
+
+-- (recomendado) padronizar nas demais também, já que você quer meta em tudo
+alter table diet_daily           add column if not exists master_sheet_id text;
+alter table acsi_analysis        add column if not exists master_sheet_id text;
+alter table gses_analysis        add column if not exists master_sheet_id text;
+alter table pmcsq_analysis       add column if not exists master_sheet_id text;
+alter table restq_analysis       add column if not exists master_sheet_id text;
+alter table cbas_analysis        add column if not exists master_sheet_id text;
+alter table construcional_raw    add column if not exists master_sheet_id text;
+alter table pingo_scoring_output add column if not exists master_sheet_id text;
+
+-- (opcional) se você também está mandando "source"
+-- alter table brums_analysis add column if not exists source text;
+-- alter table weekly_analysis add column if not exists source text;
+-- ...repete onde estiver enviando
+
 -- 1) athlete_registration: nome + time + kind
 -- =========================
 alter table athlete_registration
