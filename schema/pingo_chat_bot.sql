@@ -382,10 +382,10 @@ $$;
 -- 8.1) criar nota interpretada (decisão do agente)
 create or replace function public.create_athlete_note(
   p_athlete_id text,
+  p_note_text text,                             -- ✅ obrigatório vem antes
   p_user_id text default null,
   p_source_message_id bigint default null,
   p_title text default null,
-  p_note_text text,
   p_tags text[] default '{}'::text[],
   p_confidence numeric default null,
   p_model_name text default null,
@@ -418,6 +418,7 @@ begin
 
   return v_id;
 end $$;
+
 
 -- 8.2) transformar a ÚLTIMA mensagem do usuário em nota (comando /gravar)
 create or replace function public.save_last_user_message_as_history(
@@ -677,3 +678,71 @@ $$;
 --
 -- (Exemplo simples: permitir só service role / backend; caso contrário, deixe RLS off)
 -- (Na prática, para WhatsApp + n8n, normalmente você usa service role mesmo.)
+create or replace function public.patch_pingo_chat_context(
+  p_user_id text,
+  p_patch jsonb
+)
+returns jsonb
+language plpgsql
+as $$
+declare
+  v_meta jsonb;
+begin
+  insert into public.pingo_chat_context(user_id, meta)
+  values (p_user_id, coalesce(p_patch,'{}'::jsonb))
+  on conflict (user_id) do update set
+    meta = coalesce(pingo_chat_context.meta,'{}'::jsonb) || coalesce(excluded.meta,'{}'::jsonb);
+
+  select meta into v_meta
+  from public.pingo_chat_context
+  where user_id = p_user_id;
+
+  return jsonb_build_object('user_id', p_user_id, 'meta', v_meta);
+end $$;
+
+
+
+create or replace function public.save_user_message_as_history(
+  p_message_id bigint,
+  p_title text default null,
+  p_tags text[] default '{}'::text[],
+  p_saved_by text default 'command'
+)
+returns bigint
+language plpgsql
+as $$
+declare
+  v_msg record;
+  v_note_id bigint;
+begin
+  select * into v_msg
+  from public.pingo_user_messages
+  where id = p_message_id;
+
+  if not found then
+    raise exception 'Mensagem não encontrada: %', p_message_id;
+  end if;
+
+  update public.pingo_user_messages
+  set include_in_history = true,
+      saved_at = now(),
+      saved_by = p_saved_by
+  where id = v_msg.id;
+
+  insert into public.pingo_athlete_notes(
+    athlete_id, user_id, source_message_id,
+    title, note_text, tags, note_meta
+  )
+  values (
+    v_msg.athlete_id,
+    v_msg.user_id,
+    v_msg.id,
+    coalesce(p_title, 'Registro do usuário (chat)'),
+    v_msg.message_text,
+    coalesce(p_tags,'{}'::text[]),
+    jsonb_build_object('origin','user_command','saved_by',p_saved_by)
+  )
+  returning id into v_note_id;
+
+  return v_note_id;
+end $$;
