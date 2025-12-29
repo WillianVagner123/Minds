@@ -431,7 +431,7 @@ left join pmcsq_last p on p.athlete_id = b.athlete_id;
 -- pelo n8n após o AI classificar o texto.
 -- ===========================================================
 create or replace function public.upsert_construcional_analysis(
-  p_construcional_raw_id text,
+  p_construcional_raw_id number,
   p_athlete_id text,
   p_repertorio_protetor text,
   p_repertorio_risco text,
