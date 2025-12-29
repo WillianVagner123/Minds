@@ -431,7 +431,7 @@ left join pmcsq_last p on p.athlete_id = b.athlete_id;
 -- pelo n8n após o AI classificar o texto.
 -- ===========================================================
 create or replace function public.upsert_construcional_analysis(
-  p_construcional_raw_id number,
+  p_construcional_raw_id bigint,
   p_athlete_id text,
   p_repertorio_protetor text,
   p_repertorio_risco text,
@@ -441,7 +441,11 @@ create or replace function public.upsert_construcional_analysis(
   p_confidence numeric default null,
   p_explanation jsonb default null
 )
-returns void language plpgsql as $$
+returns construcional_analysis
+language plpgsql
+as $$
+declare
+  v_row construcional_analysis;
 begin
   insert into construcional_analysis(
     construcional_raw_id, athlete_id,
@@ -452,11 +456,14 @@ begin
     p_construcional_raw_id, p_athlete_id,
     p_repertorio_protetor, p_repertorio_risco, p_apoio_ambiental, p_claridade_metas,
     p_model_name, p_confidence, p_explanation
-  );
+  )
+  returning * into v_row;
 
   update construcional_raw
   set status = 'analyzed', last_error = null
   where id = p_construcional_raw_id;
+
+  return v_row;
 end $$;
 
 -- ===========================================================
