@@ -1,13 +1,14 @@
 /**
  * MINDS Performance – Construção de Formulários (com prefixos nas perguntas)
  *
- * Este script recria todos os formulários utilizados no fluxo MINDS
- * adicionando um prefixo de código único a cada pergunta.
- *
- * Como usar:
- * 1) Cole este código em um projeto Apps Script
- * 2) Ajuste as variáveis no topo
- * 3) Execute createAllFormsLinkedPrefixed()
+ * Cria e vincula todos os formulários à planilha mãe:
+ * - Daily
+ * - Weekly
+ * - Quarterly (GSES, ACSI, PMCSQ, RESTQ Atleta)
+ * - Semiannual (CBAS/LSS)
+ * - RESTQ Trainer
+ * - Registration (cadastro)
+ * - Construcional (4 blocos)  ✅ separado do cadastro
  */
 
 /* =========================
@@ -32,19 +33,13 @@ var TAB_NAMES = {
   SEMIANNUAL: "RESP_SEMIANNUAL",
   RESTQ_TRAINER: "RESP_RESTQ_TRAINER",
   REGISTRATION: "RESP_REGISTRATION",
-  CONSTRUCIONAL: "RESP_CONSTRUCIONAL"
+  CONSTRUCIONAL: "RESP_CONSTRUCIONAL" // ✅ NOVO
 };
 
 /* =========================
    FUNÇÕES AUXILIARES: PLANILHA MÃE E VÍNCULO
 ========================= */
 
-/**
- * Garante a existência da planilha mãe de respostas.
- * Se MASTER_SHEET_ID estiver vazio, tenta ler de ScriptProperties.
- * Caso não exista, cria uma nova planilha e salva o ID em ScriptProperties.
- * @returns {Spreadsheet} instância da planilha mãe
- */
 function ensureMasterSpreadsheet_() {
   var props = PropertiesService.getScriptProperties();
   var sid = (MASTER_SHEET_ID || "").trim();
@@ -61,46 +56,30 @@ function ensureMasterSpreadsheet_() {
   return ss;
 }
 
-/**
- * Vincula um Google Form à planilha mãe e renomeia a aba de respostas.
- * @param {FormApp.Form} form instância do formulário a ser vinculado
- * @param {Spreadsheet} masterSs planilha mãe já aberta
- * @param {string} tabName nome desejado da aba
- */
 function linkFormToMasterAndRenameTab_(form, masterSs, tabName) {
   if (!form) throw new Error("Form inválido.");
   if (!masterSs) throw new Error("Planilha mãe inválida.");
   if (!tabName) throw new Error("Nome da aba não pode ser vazio.");
 
-  // Snapshot dos IDs de abas antes do vínculo
-  var beforeIds = masterSs.getSheets().map(function(sh){ return sh.getSheetId(); });
+  var beforeIds = masterSs.getSheets().map(function (sh) { return sh.getSheetId(); });
 
-  // Define a planilha de destino para o Form
   form.setDestination(FormApp.DestinationType.SPREADSHEET, masterSs.getId());
 
-  // Aguarda a criação da nova aba
   var newSheet = waitForNewResponseSheet_(masterSs, beforeIds, 12, 700);
-
-  // Renomeia a aba nova
   renameSheetSafely_(masterSs, newSheet, tabName);
-
   return newSheet;
 }
 
-/**
- * Espera a criação de uma nova aba de respostas, comparando IDs de abas antes e depois.
- * Fallback: procura "Form Responses".
- */
 function waitForNewResponseSheet_(ss, beforeIds, attempts, sleepMs) {
   attempts = attempts || 10;
   sleepMs = sleepMs || 600;
 
   for (var i = 0; i < attempts; i++) {
     var sheets = ss.getSheets();
-    var afterIds = sheets.map(function(sh){ return sh.getSheetId(); });
+    var afterIds = sheets.map(function (sh) { return sh.getSheetId(); });
 
     var created = [];
-    afterIds.forEach(function(id) {
+    afterIds.forEach(function (id) {
       if (beforeIds.indexOf(id) === -1) created.push(id);
     });
 
@@ -115,8 +94,7 @@ function waitForNewResponseSheet_(ss, beforeIds, attempts, sleepMs) {
     SpreadsheetApp.flush();
   }
 
-  // Fallback: tenta encontrar uma aba com "form responses" no nome
-  var fallback = ss.getSheets().filter(function(sh){
+  var fallback = ss.getSheets().filter(function (sh) {
     var n = sh.getName();
     return n && n.toLowerCase().indexOf("form responses") !== -1;
   });
@@ -125,10 +103,6 @@ function waitForNewResponseSheet_(ss, beforeIds, attempts, sleepMs) {
   throw new Error("Não foi possível detectar a aba de respostas criada pelo vínculo do Form.");
 }
 
-/**
- * Renomeia uma aba. Se já existir uma aba com o nome desejado e não for a mesma,
- * renomeia a existente para backup antes.
- */
 function renameSheetSafely_(ss, sheet, desiredName) {
   var existing = ss.getSheetByName(desiredName);
   if (existing && existing.getSheetId() !== sheet.getSheetId()) {
@@ -145,7 +119,8 @@ function renameSheetSafely_(ss, sheet, desiredName) {
 function createDailyFormPrefixed() {
   var form = FormApp.create(FORMS_PREFIX + "Avaliação Diária");
   form.setDescription(
-    "Formulário diário com prefixos. Inclui: (1) BRUMS, (2) Carga de treino, (3) Energia/Vigor, (4) Nutrição, (5) Detalhes do treino."
+    "Formulário diário com prefixos. Inclui: (1) BRUMS, (2) Carga de treino (RPE×duração), " +
+    "(3) Check-in de vigor, (4) Nutrição, (5) Peso/detalhes. Tempo estimado: ~5 min."
   );
 
   form.addTextItem().setTitle("ATHLETE_ID | ID do atleta (código interno ou CPF)").setRequired(true);
@@ -160,7 +135,7 @@ function createDailyFormPrefixed() {
     "Cansado(a)", "Exausto(a)", "Sem energia", "Letárgico(a)",
     "Confuso(a)", "Desorientado(a)", "Em dúvida", "Esquecido(a)"
   ];
-  brumsItems.forEach(function(item, idx) {
+  brumsItems.forEach(function (item, idx) {
     var code = "BRUMS_Q" + String(idx + 1).padStart(2, "0");
     form.addScaleItem()
       .setTitle(code + " | Nas últimas horas eu me senti... " + item)
@@ -183,7 +158,7 @@ function createDailyFormPrefixed() {
 
   form.addPageBreakItem().setTitle("Check-in de Energia / Vigor");
   var vigorItems = ["Energético(a)", "Alerta", "Desperto(a)", "Vivo(a)"];
-  vigorItems.forEach(function(item, idx) {
+  vigorItems.forEach(function (item, idx) {
     var code = "VIGOR_Q" + String(idx + 1).padStart(2, "0");
     form.addScaleItem()
       .setTitle(code + " | No momento, eu me sinto... " + item)
@@ -200,7 +175,7 @@ function createDailyFormPrefixed() {
     .setRequired(true);
 
   var missedMeals = form.addMultipleChoiceItem();
-  missedMeals.setTitle("DAILY_MISSED | Hoje você deixou de fazer alguma refeição importante (café, almoço, jantar ou lanche pré/pós)?")
+  missedMeals.setTitle("DAILY_MISSED | Hoje você deixou de fazer alguma refeição importante?")
     .setChoices([
       missedMeals.createChoice("Não"),
       missedMeals.createChoice("Sim, 1 refeição"),
@@ -237,8 +212,8 @@ function createDailyFormPrefixed() {
     ])
     .setRequired(true);
 
-  form.addTextItem().setTitle("DAILY_MODALITY | Modalidade do treino").setHelpText("Ex.: corrida, musculação, ciclismo…").setRequired(false);
-  form.addTextItem().setTitle("DAILY_TIME | Tempo de treino (minutos)").setHelpText("Pré: estimativa. Pós: duração real.").setRequired(false);
+  form.addTextItem().setTitle("DAILY_MODALITY | Modalidade do treino").setRequired(false);
+  form.addTextItem().setTitle("DAILY_TIME | Tempo de treino (minutos)").setRequired(false);
 
   return form;
 }
@@ -246,7 +221,8 @@ function createDailyFormPrefixed() {
 function createWeeklyFormPrefixed() {
   var form = FormApp.create(FORMS_PREFIX + "Avaliação Semanal");
   form.setDescription(
-    "Formulário semanal com prefixos. Avalia percepção do atleta sobre a semana, adesão nutricional e eventos marcantes."
+    "Formulário semanal com prefixos. Avalia percepção do atleta sobre a semana (desempenho, sono, treinos), " +
+    "adesão ao plano nutricional e eventos marcantes."
   );
 
   form.addTextItem().setTitle("ATHLETE_ID | ID do atleta (código interno ou CPF)").setRequired(true);
@@ -259,8 +235,13 @@ function createWeeklyFormPrefixed() {
     .setLabels("Muito ruim", "Excelente")
     .setRequired(true);
 
-  form.addParagraphTextItem().setTitle("WEEK_RECOVERY | Se esteve cansado(a) esta semana, o que você fez para se recuperar ou lidar com o cansaço?").setRequired(false);
-  form.addParagraphTextItem().setTitle("WEEK_COMMENTS | Outros comentários sobre sua semana (sentimentos, percepções, etc.)").setRequired(false);
+  form.addParagraphTextItem()
+    .setTitle("WEEK_RECOVERY | Se esteve cansado(a) esta semana, o que você fez para se recuperar ou lidar com o cansaço?")
+    .setRequired(false);
+
+  form.addParagraphTextItem()
+    .setTitle("WEEK_COMMENTS | Outros comentários sobre sua semana (sentimentos, percepções, etc.)")
+    .setRequired(false);
 
   form.addPageBreakItem().setTitle("Adesão ao Plano Nutricional");
   form.addScaleItem()
@@ -269,7 +250,9 @@ function createWeeklyFormPrefixed() {
     .setLabels("Muito baixa", "Excelente")
     .setRequired(true);
 
-  form.addParagraphTextItem().setTitle("WEEK_NUTR_COMMENTS | Comentários sobre sua alimentação nesta semana (opcional)").setRequired(false);
+  form.addParagraphTextItem()
+    .setTitle("WEEK_NUTR_COMMENTS | Comentários sobre sua alimentação nesta semana (opcional)")
+    .setRequired(false);
 
   form.addPageBreakItem().setTitle("Eventos Marcantes de Treino/Competição");
   form.addParagraphTextItem()
@@ -282,11 +265,14 @@ function createWeeklyFormPrefixed() {
 
 function createQuarterlyFormPrefixed() {
   var form = FormApp.create(FORMS_PREFIX + "Avaliação Trimestral");
-  form.setDescription("Formulário trimestral com prefixos, incluindo GSES, ACSI, PMCSQ e RESTQ-Sport (atleta).");
+  form.setDescription(
+    "Formulário trimestral com prefixos, incluindo GSES, ACSI, PMCSQ e RESTQ-Sport (atleta). Tempo estimado: ~25 min."
+  );
 
   form.addTextItem().setTitle("ATHLETE_ID | ID do atleta (código interno ou CPF)").setRequired(true);
   form.addDateItem().setTitle("QUART_DATE | Data da avaliação").setRequired(true);
 
+  // GSES – 10 itens
   form.addPageBreakItem().setTitle("GSES – Autoeficácia Geral");
   var gsesItems = [
     "Se estou com problemas, geralmente encontro uma saída.",
@@ -300,7 +286,7 @@ function createQuarterlyFormPrefixed() {
     "Eu me mantenho calmo mesmo enfrentando dificuldades porque confio na minha capacidade de resolver problemas.",
     "Eu geralmente consigo enfrentar qualquer adversidade."
   ];
-  gsesItems.forEach(function(text, idx) {
+  gsesItems.forEach(function (text, idx) {
     var code = "GSES_Q" + String(idx + 1).padStart(2, "0");
     form.addScaleItem()
       .setTitle(code + " | " + text)
@@ -309,6 +295,7 @@ function createQuarterlyFormPrefixed() {
       .setRequired(true);
   });
 
+  // ACSI – 28 itens
   form.addPageBreakItem().setTitle("ACSI – Habilidades de Enfrentamento");
   var acsiItems = [
     "Diariamente ou semanalmente eu estabeleço metas muito específicas que me guiam no que fazer.",
@@ -340,7 +327,7 @@ function createQuarterlyFormPrefixed() {
     "Eu aperfeiçoo minhas habilidades escutando cuidadosamente aos conselhos e instruções dos técnicos e treinadores.",
     "Eu cometo menos erros quando estou sob pressão porque me concentro melhor."
   ];
-  acsiItems.forEach(function(text, idx) {
+  acsiItems.forEach(function (text, idx) {
     var code = "ACSI_Q" + String(idx + 1).padStart(2, "0");
     form.addScaleItem()
       .setTitle(code + " | " + text)
@@ -349,6 +336,7 @@ function createQuarterlyFormPrefixed() {
       .setRequired(true);
   });
 
+  // PMCSQ – 33 itens (mantive exatamente a sua lista, só garantindo a contagem)
   form.addPageBreakItem().setTitle("PMCSQ – Clima Motivacional no Esporte");
   form.addSectionHeaderItem().setTitle("Instruções: Responda de 1 (Discordo totalmente) a 5 (Concordo totalmente).");
   var pmcsqItems = [
@@ -386,8 +374,8 @@ function createQuarterlyFormPrefixed() {
     "Cada jogador/atleta se sente como se fosse um membro importante da equipe.",
     "Os jogadores/atletas se ajudam a melhorar e a se destacar."
   ];
-  pmcsqItems.forEach(function(text, idx) {
-    var code = "PMCSQ_Q" + String(idx + 1).padStart(2, "0");
+  pmcsqItems.forEach(function (text, idx) {
+    var code = "PMCSQ_Q" + String(idx + 1).padStart(2, "0"); // ✅ 01..33
     form.addScaleItem()
       .setTitle(code + " | " + text)
       .setBounds(1, 5)
@@ -395,6 +383,7 @@ function createQuarterlyFormPrefixed() {
       .setRequired(true);
   });
 
+  // RESTQ-Sport (Atleta) – 48 itens (mantive sua lista; só garantindo que gera prefixo RESTQA_Q01..)
   form.addPageBreakItem().setTitle("RESTQ-Sport – Estresse e Recuperação (Atleta)");
   var restqAthleteItems = [
     "Eu assisti televisão.",
@@ -446,8 +435,8 @@ function createQuarterlyFormPrefixed() {
     "Eu me senti contente.",
     "Eu estava zangado com alguém."
   ];
-  restqAthleteItems.forEach(function(text, idx) {
-    var code = "RESTQA_Q" + String(idx + 1).padStart(2, "0");
+  restqAthleteItems.forEach(function (text, idx) {
+    var code = "RESTQA_Q" + String(idx + 1).padStart(2, "0"); // ✅ 01..48
     form.addScaleItem()
       .setTitle(code + " | " + text)
       .setBounds(0, 6)
@@ -460,7 +449,7 @@ function createQuarterlyFormPrefixed() {
 
 function createSemiannualFormPrefixed() {
   var form = FormApp.create(FORMS_PREFIX + "Avaliação Semestral – CBAS/LSS");
-  form.setDescription("Formulário semestral em que o atleta avalia seu treinador.");
+  form.setDescription("Formulário semestral em que o atleta avalia seu treinador. Tempo estimado: 5–7 minutos.");
 
   form.addTextItem().setTitle("ATHLETE_ID | ID do atleta (código interno ou CPF)").setRequired(true);
   form.addTextItem().setTitle("SEMI_COACH_NAME | Nome do treinador avaliado").setRequired(true);
@@ -469,7 +458,7 @@ function createSemiannualFormPrefixed() {
 
   function addBlock(prefix, title, items) {
     form.addPageBreakItem().setTitle(title);
-    items.forEach(function(text, idx) {
+    items.forEach(function (text, idx) {
       var code = prefix + "_Q" + String(idx + 1).padStart(2, "0");
       form.addScaleItem()
         .setTitle(code + " | " + text)
@@ -536,7 +525,7 @@ function createSemiannualFormPrefixed() {
 
 function createRESTQTrainerFormPrefixed() {
   var form = FormApp.create(FORMS_PREFIX + "RESTQ-Sport – Treinador");
-  form.setDescription("Formulário separado para o bloco do treinador no RESTQ-Sport.");
+  form.setDescription("Formulário separado para o bloco do treinador no RESTQ-Sport. Tempo estimado: 5–7 minutos.");
 
   form.addTextItem().setTitle("TR_ID | ID do treinador (código interno)").setRequired(true);
   form.addTextItem().setTitle("TR_NAME | Nome completo do treinador").setRequired(true);
@@ -577,8 +566,9 @@ function createRESTQTrainerFormPrefixed() {
     "Eu lidei efetivamente com os problemas de meus atletas.",
     "Eu falei com meus atletas sobre as técnicas de regulação do nível de ativação (por exemplo: relaxamento)."
   ];
-  restqCoachItems.forEach(function(text, idx) {
-    var code = "TR_RESTQ_Q" + String(idx + 1).padStart(2, "0");
+
+  restqCoachItems.forEach(function (text, idx) {
+    var code = "TR_RESTQ_Q" + String(idx + 1).padStart(2, "0"); // ✅ 01..33
     form.addScaleItem()
       .setTitle(code + " | " + text)
       .setBounds(0, 6)
@@ -589,12 +579,12 @@ function createRESTQTrainerFormPrefixed() {
   return form;
 }
 
-/**
- * Cadastro do atleta (SEM construcional aqui; agora é separado).
- */
 function createRegistrationFormPrefixed() {
   var form = FormApp.create(FORMS_PREFIX + "Cadastro do Atleta");
-  form.setDescription("Formulário completo de cadastro do atleta (dados pessoais, histórico esportivo, saúde, rotina, rede de apoio, objetivos e consentimento).");
+  form.setDescription(
+    "Formulário completo de cadastro do atleta (dados pessoais, histórico esportivo, saúde, rotina, rede de apoio, objetivos). " +
+    "✅ Construcional foi separado em outro formulário."
+  );
 
   form.addTextItem().setTitle("REG_ID | ID interno do atleta (código MINDS)").setRequired(true);
   form.addTextItem().setTitle("REG_DOC | Documento (CPF)").setHelpText("Informe apenas números.").setRequired(false);
@@ -627,7 +617,6 @@ function createRegistrationFormPrefixed() {
   form.addTextItem().setTitle("REG_COACH_PHONE | Telefone do treinador principal (WhatsApp, com DDD)").setRequired(false);
   form.addParagraphTextItem().setTitle("REG_CONTACT_PREF | Melhor forma/horário de contato").setRequired(false);
 
-  // (demais campos longos sem prefixo — mantidos como você enviou)
   form.addPageBreakItem().setTitle("Dados Esportivos Atuais");
   form.addTextItem().setTitle("Modalidade esportiva principal").setRequired(true);
   form.addTextItem().setTitle("Categoria (sub-10, sub-12, sub-14, sub-17, adulto etc.)").setRequired(false);
@@ -712,19 +701,16 @@ function createRegistrationFormPrefixed() {
   return form;
 }
 
-/**
- * Construcional separado (4 blocos), com CONS_BLOCO_1..4.
- */
 function createConstrucionalFormPrefixed() {
   var form = FormApp.create(FORMS_PREFIX + "Questionário Construcional (4 blocos)");
   form.setDescription(
-    "Questionário Construcional em 4 blocos (texto livre). " +
-    "Use o MESMO ATHLETE_ID do cadastro para vincular corretamente."
+    "Questionário Construcional em 4 blocos (resposta em texto livre). " +
+    "Use o mesmo ATHLETE_ID do cadastro (CPF ou ID interno)."
   );
 
   form.addTextItem()
     .setTitle("ATHLETE_ID | ID do atleta (CPF ou código MINDS)")
-    .setHelpText("Use o MESMO ID usado no cadastro.")
+    .setHelpText("Use o MESMO ID usado no cadastro para o sistema vincular corretamente.")
     .setRequired(true);
 
   form.addTextItem().setTitle("CONS_NAME | Nome (opcional)").setRequired(false);
@@ -733,11 +719,11 @@ function createConstrucionalFormPrefixed() {
   form.addParagraphTextItem()
     .setTitle("CONS_BLOCO_1 | Bloco 1 – O que você faz hoje")
     .setHelpText(
-      "Inclua, se fizer sentido:\n" +
-      "• O que já faz que te ajuda?\n" +
-      "• O que às vezes atrapalha?\n" +
-      "• Situações de confiança?\n" +
-      "• Situações de insegurança?"
+      "Responda incluindo, se fizer sentido:\n" +
+      "• O que você já faz que te ajuda nos treinos e competições?\n" +
+      "• O que você faz que às vezes atrapalha?\n" +
+      "• Em quais situações se sente mais confiante?\n" +
+      "• Em quais situações se sente inseguro(a) ou com dificuldade?"
     )
     .setRequired(false);
 
@@ -745,11 +731,11 @@ function createConstrucionalFormPrefixed() {
   form.addParagraphTextItem()
     .setTitle("CONS_BLOCO_2 | Bloco 2 – O que acontece depois")
     .setHelpText(
-      "Inclua, se fizer sentido:\n" +
-      "• Quando vai bem, o que acontece?\n" +
-      "• Quando não vai tão bem, o que acontece?\n" +
-      "• O que mais motiva?\n" +
-      "• Algo difícil/negativo que pesa?"
+      "Responda incluindo, se fizer sentido:\n" +
+      "• Quando você vai bem, o que costuma acontecer?\n" +
+      "• Quando você não vai tão bem, o que acontece?\n" +
+      "• O que mais te motiva a continuar treinando e competindo?\n" +
+      "• Existe algo difícil/negativo que às vezes pesa no esporte?"
     )
     .setRequired(false);
 
@@ -757,11 +743,11 @@ function createConstrucionalFormPrefixed() {
   form.addParagraphTextItem()
     .setTitle("CONS_BLOCO_3 | Bloco 3 – O que gostaria de fazer")
     .setHelpText(
-      "Inclua, se fizer sentido:\n" +
-      "• O que gostaria de mudar?\n" +
-      "• Algo que vê outros fazendo e quer aprender?\n" +
-      "• Habilidades a melhorar?\n" +
-      "• O que ajudaria a lidar com frustrações?"
+      "Responda incluindo, se fizer sentido:\n" +
+      "• O que você gostaria de mudar no treino/competição?\n" +
+      "• Algo que vê outros atletas fazendo e gostaria de aprender?\n" +
+      "• Quais habilidades gostaria de melhorar (técnica, foco, controle emocional…)?\n" +
+      "• O que poderia ajudar a lidar melhor com erros/frustrações/derrotas?"
     )
     .setRequired(false);
 
@@ -769,11 +755,11 @@ function createConstrucionalFormPrefixed() {
   form.addParagraphTextItem()
     .setTitle("CONS_BLOCO_4 | Bloco 4 – Apoios e recursos")
     .setHelpText(
-      "Inclua, se fizer sentido:\n" +
-      "• O que no ambiente já ajuda?\n" +
-      "• Que suporte sente falta?\n" +
-      "• Como seria o cenário ideal?\n" +
-      "• Pequenas mudanças que fariam diferença?"
+      "Responda incluindo, se fizer sentido:\n" +
+      "• O que no seu ambiente já ajuda você a ir melhor?\n" +
+      "• Que tipo de suporte você sente falta hoje?\n" +
+      "• Se pudesse montar o treino/competição dos sonhos, como seria?\n" +
+      "• Que pequenas mudanças já fariam diferença agora?"
     )
     .setRequired(false);
 
@@ -781,7 +767,7 @@ function createConstrucionalFormPrefixed() {
 }
 
 /* =========================
-   FUNÇÃO MESTRA: CRIAR E VINCULAR TODOS OS FORMULÁRIOS
+   FUNÇÃO MESTRA
 ========================= */
 
 function createAllFormsLinkedPrefixed() {
@@ -793,7 +779,7 @@ function createAllFormsLinkedPrefixed() {
   var semiannual = createSemiannualFormPrefixed();
   var restqTrainer = createRESTQTrainerFormPrefixed();
   var registration = createRegistrationFormPrefixed();
-  var construcional = createConstrucionalFormPrefixed();
+  var construcional = createConstrucionalFormPrefixed(); // ✅ separado
 
   linkFormToMasterAndRenameTab_(daily, master, TAB_NAMES.DAILY);
   linkFormToMasterAndRenameTab_(weekly, master, TAB_NAMES.WEEKLY);
@@ -811,6 +797,7 @@ function createAllFormsLinkedPrefixed() {
     restq_trainer: restqTrainer.getId(),
     registration: registration.getId(),
     construcional: construcional.getId(),
-    master_sheet_id: master.getId()
+    master_sheet_id: master.getId(),
+    master_sheet_url: master.getUrl()
   };
 }
