@@ -183,7 +183,10 @@ as $$
 $$;
 
 -- 6.2) listar atletas (por nome/ID/telefone/time)
-create or replace function public.find_athletes(p_query text, p_limit int default 10)
+create or replace function public.find_athletes(
+  p_query text default null,
+  p_limit int default 10
+)
 returns table (
   athlete_id text,
   athlete_name text,
@@ -207,17 +210,24 @@ as $$
     a.inserted_at as last_seen
   from public.athlete_latest_view a, q
   where
-    q.query <> ''
-    and (
-      a.athlete_id ilike q.query || '%'
-      or coalesce(a.athlete_name,'') ilike '%' || q.query || '%'
-      or coalesce(a.team_name,'') ilike '%' || q.query || '%'
-      or coalesce(a.athlete_phone,'') ilike '%' || regexp_replace(q.query,'\D','','g') || '%'
-      or coalesce(a.coach_phone,'') ilike '%' || regexp_replace(q.query,'\D','','g') || '%'
+    -- ✅ se query vazia: mostra recentes
+    (q.query = '')
+    OR
+    -- ✅ se tem query: faz o filtro normal
+    (
+      q.query <> ''
+      and (
+        a.athlete_id ilike q.query || '%'
+        or coalesce(a.athlete_name,'') ilike '%' || q.query || '%'
+        or coalesce(a.team_name,'') ilike '%' || q.query || '%'
+        or coalesce(a.athlete_phone,'') ilike '%' || regexp_replace(q.query,'\D','','g') || '%'
+        or coalesce(a.coach_phone,'') ilike '%' || regexp_replace(q.query,'\D','','g') || '%'
+      )
     )
   order by a.inserted_at desc
   limit greatest(1, least(p_limit, 25));
 $$;
+
 
 -- 6.3) definir atleta ativo (salva no contexto e na lista do usuário)
 create or replace function public.set_active_athlete(
